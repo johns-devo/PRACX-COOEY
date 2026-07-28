@@ -1265,22 +1265,6 @@ form .patient-tab-panel {
   padding-top: 18px;
 }
 
-.claim-map-note {
-  align-items: flex-start;
-  background: #f1f8f5;
-  border: 1px solid #cce4da;
-  border-radius: 12px;
-  color: #31594a;
-  display: flex;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 13px 15px;
-}
-
-.claim-map-note strong {
-  flex: 0 0 auto;
-}
-
 .coverage-type-section {
   border-top: 1px solid var(--soft-line);
   margin-top: 18px;

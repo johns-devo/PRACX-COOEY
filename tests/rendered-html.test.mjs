@@ -188,6 +188,9 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(operationsWorkspace, /Primary responsibility/);
   assert.match(operationsWorkspace, /Guarantor/);
   assert.match(operationsWorkspace, /Remaining \/ final balance/);
+  assert.match(operationsWorkspace, /CoverageTypeSelector/);
+  assert.match(operationsWorkspace, /autoComplete="off"/);
+  assert.doesNotMatch(operationsWorkspace, /CMS-1500 Boxes 10b, 11b \(Y4\), 14\/15 and 23/);
   assert.match(cms1500, /accidentRelated/);
   assert.match(cms1500, /legalResponsibility/);
   assert.doesNotMatch(operationsWorkspace, />Add coverage</);
