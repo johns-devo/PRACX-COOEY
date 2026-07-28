@@ -354,82 +354,6 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     setModalOpen(true);
   }
 
-  function openResponsibilityProfile(patient: DataRow) {
-    const today = new Date().toISOString().slice(0, 10);
-    const orderRank: Record<string, number> = { primary: 1, secondary: 2, tertiary: 3, unassigned: 4 };
-    const patientCoverages = (data?.coverages || [])
-      .filter((coverage) => value(coverage, "patientId") === value(patient, "id") && value(coverage, "status") === "active")
-      .sort((left, right) => (orderRank[value(left, "priority")] || 4) - (orderRank[value(right, "priority")] || 4));
-    setFormMode("responsibility");
-    setForm({
-      patientId: value(patient, "id"),
-      patientName: `${value(patient, "firstName")} ${value(patient, "lastName")}`,
-      profileName: "",
-      billingContext: "routine",
-      effectiveFrom: today,
-      effectiveTo: "",
-      primarySource: patientCoverages[0] ? `coverage:${value(patientCoverages[0], "id")}` : "special:patient",
-      secondarySource: patientCoverages[1] ? `coverage:${value(patientCoverages[1], "id")}` : "",
-      tertiarySource: patientCoverages[2] ? `coverage:${value(patientCoverages[2], "id")}` : "",
-      finalBalanceSource: "",
-      guarantorType: "patient",
-      guarantorName: `${value(patient, "firstName")} ${value(patient, "lastName")}`,
-      verificationStatus: "unverified",
-      patientBillingHold: false,
-      legalSourceName: "",
-      reason: "",
-    });
-    setError("");
-    setNotice("");
-    setModalOpen(true);
-  }
-
-  function openCoverage(patient: DataRow) {
-    const assigned = new Set((data?.coverages || []).filter((coverage) => value(coverage, "patientId") === value(patient, "id") && value(coverage, "status") === "active").map((coverage) => value(coverage, "priority")));
-    const nextOrder = ["primary", "secondary", "tertiary"].find((order) => !assigned.has(order)) || "unassigned";
-    setFormMode("coverage");
-    setForm({
-      patientId: value(patient, "id"),
-      patientName: `${value(patient, "firstName")} ${value(patient, "lastName")}`,
-      patientFirstName: value(patient, "firstName"),
-      patientLastName: value(patient, "lastName"),
-      patientDateOfBirth: value(patient, "dateOfBirth"),
-      patientSex: value(patient, "sex"),
-      planId: "",
-      memberId: "",
-      groupNumber: "",
-      priority: nextOrder,
-      relationship: "self",
-      subscriberFirstName: value(patient, "firstName"),
-      subscriberLastName: value(patient, "lastName"),
-      subscriberDateOfBirth: value(patient, "dateOfBirth"),
-      subscriberSex: value(patient, "sex"),
-      effectiveDate: "",
-      terminationDate: "",
-      verifyEligibility: true,
-    });
-    setError("");
-    setNotice("");
-    setModalOpen(true);
-  }
-
-  function openCoverageOrder(patient: DataRow) {
-    const activeCoverages = (data?.coverages || []).filter((coverage) =>
-      value(coverage, "patientId") === value(patient, "id") && value(coverage, "status") === "active");
-    const coverageFor = (priority: string) => value(activeCoverages.find((coverage) => value(coverage, "priority") === priority) || {}, "id");
-    setFormMode("coverage-order");
-    setForm({
-      patientId: value(patient, "id"),
-      patientName: `${value(patient, "firstName")} ${value(patient, "lastName")}`,
-      primaryCoverageId: coverageFor("primary"),
-      secondaryCoverageId: coverageFor("secondary"),
-      tertiaryCoverageId: coverageFor("tertiary"),
-    });
-    setError("");
-    setNotice("");
-    setModalOpen(true);
-  }
-
   function openCloseResponsibility(profile: DataRow) {
     const patient = data?.patients.find((item) => value(item, "id") === value(profile, "patientId"));
     setFormMode("close-responsibility");
@@ -602,7 +526,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
                     const coverage = patientCoverages.sort((left, right) => (orderRank[value(left, "priority")] || 4) - (orderRank[value(right, "priority")] || 4))[0];
                     const plan = data.plans.find((item) => value(item, "id") === value(coverage || {}, "planId"));
                     const latestEligibility = data.eligibility.find((item) => value(item, "patientId") === value(patient, "id"));
-                    return <tr key={value(patient, "id")}><td><PersonCell row={patient} /></td><td className="mono">{value(patient, "accountNumber")}</td><td>{shortDate(value(patient, "dateOfBirth"))}</td><td><strong className="location-name">{value(patient, "phone") || "No phone"}</strong><small className="address">{value(patient, "email") || `${value(patient, "city")}, ${value(patient, "state")}`}</small></td><td><strong className="location-name">{value(plan || {}, "name") || "Self pay"}</strong><small className="address">{coverage ? `${value(coverage, "priority").replaceAll("_", " ")} · ` : ""}{value(coverage || {}, "memberId") || "No member ID"} · {patientCoverages.length} active</small></td><td><Status value={value(latestEligibility || {}, "status") || "not checked"} /></td><td><Status value={value(patient, "status")} /></td><td><div className="row-actions"><button onClick={() => editPatient(patient, coverage)} type="button">Edit</button><button onClick={() => openCoverage(patient)} type="button">Add coverage</button><button disabled={!patientCoverages.length} onClick={() => openCoverageOrder(patient)} type="button">Default order</button><button onClick={() => openResponsibilityProfile(patient)} type="button">DOS order</button><button disabled={!coverage || isSaving} onClick={() => verifyPatientEligibility(value(patient, "id"))} type="button">Check eligibility</button></div></td></tr>;
+                    return <tr key={value(patient, "id")}><td><PersonCell row={patient} /></td><td className="mono">{value(patient, "accountNumber")}</td><td>{shortDate(value(patient, "dateOfBirth"))}</td><td><strong className="location-name">{value(patient, "phone") || "No phone"}</strong><small className="address">{value(patient, "email") || `${value(patient, "city")}, ${value(patient, "state")}`}</small></td><td><strong className="location-name">{value(plan || {}, "name") || "Self pay"}</strong><small className="address">{coverage ? `${value(coverage, "priority").replaceAll("_", " ")} · ` : ""}{value(coverage || {}, "memberId") || "No member ID"} · {patientCoverages.length} active</small></td><td><Status value={value(latestEligibility || {}, "status") || "not checked"} /></td><td><Status value={value(patient, "status")} /></td><td><div className="row-actions"><button onClick={() => editPatient(patient, coverage)} type="button">Edit</button><button disabled={!coverage || isSaving} onClick={() => verifyPatientEligibility(value(patient, "id"))} type="button">Check eligibility</button></div></td></tr>;
                   })}</tbody></table>
               </TablePanel>
               <TablePanel title="Billing responsibility timeline" description="Primary, secondary, tertiary and guarantor assignments by DOS range and billing context.">
