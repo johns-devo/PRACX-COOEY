@@ -1102,6 +1102,55 @@ form .patient-tab-panel {
   margin-top: 22px;
 }
 
+.insurance-save-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid #b9dcca;
+  border-radius: 11px;
+  background: #f1faf6;
+}
+
+.insurance-save-actions div {
+  display: grid;
+  gap: 3px;
+}
+
+.insurance-save-actions strong {
+  color: #245d49;
+  font-size: 14px;
+}
+
+.insurance-save-actions span {
+  color: #63766f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.insurance-save-actions button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 8px;
+  background: #176b52;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.insurance-save-actions button:hover {
+  background: #115943;
+}
+
+.insurance-save-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .patient-subscriber-grid {
   grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) 135px 115px;
 }
@@ -2669,6 +2718,15 @@ form .patient-tab-panel {
   .patient-policy-options,
   .eligibility-option {
     grid-template-columns: 1fr;
+  }
+
+  .insurance-save-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .insurance-save-actions button {
+    width: 100%;
   }
 }
 

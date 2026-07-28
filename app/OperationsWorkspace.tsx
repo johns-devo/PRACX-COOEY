@@ -173,6 +173,44 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     setForm((current) => ({ ...current, [name]: next }));
   }
 
+  function continueWithNextCoverage(savedPatientId: string, savedForm: Record<string, string | boolean>) {
+    const assigned = new Set(
+      (data?.coverages || [])
+        .filter((coverage) => value(coverage, "patientId") === savedPatientId && value(coverage, "status") === "active")
+        .map((coverage) => value(coverage, "priority")),
+    );
+    assigned.add(String(savedForm.priority || "unassigned"));
+    const nextOrder = ["primary", "secondary", "tertiary"].find((order) => !assigned.has(order)) || "unassigned";
+    const firstName = String(savedForm.patientFirstName || savedForm.firstName || "");
+    const lastName = String(savedForm.patientLastName || savedForm.lastName || "");
+    const dateOfBirth = String(savedForm.patientDateOfBirth || savedForm.dateOfBirth || "");
+    const sex = String(savedForm.patientSex || savedForm.sex || "unknown");
+    setFormMode("coverage");
+    setForm({
+      patientId: savedPatientId,
+      patientName: String(savedForm.patientName || `${firstName} ${lastName}`).trim(),
+      patientFirstName: firstName,
+      patientLastName: lastName,
+      patientDateOfBirth: dateOfBirth,
+      patientSex: sex,
+      planId: "",
+      memberId: "",
+      groupNumber: "",
+      priority: nextOrder,
+      relationship: "self",
+      subscriberFirstName: firstName,
+      subscriberLastName: lastName,
+      subscriberDateOfBirth: dateOfBirth,
+      subscriberSex: sex,
+      effectiveDate: "",
+      terminationDate: "",
+      verifyEligibility: true,
+    });
+    setNotice(`Insurance saved. Add the ${nextOrder === "unassigned" ? "next" : nextOrder} policy.`);
+    setError("");
+    setModalOpen(true);
+  }
+
   function openForm(mode = "") {
     setFormMode(mode);
     setForm(blankForm(module));
@@ -204,6 +242,10 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
 
   async function submitForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const submitIntent = submitter instanceof HTMLButtonElement ? submitter.value : "";
+    const submittedMode = formMode;
+    const submittedForm = { ...form };
     const actionName =
       module === "patients" ? formMode === "responsibility" ? "createResponsibilityProfile" : formMode === "close-responsibility" ? "closeResponsibilityProfile" : formMode === "coverage-order" ? "updateCoverageOrder" : formMode === "coverage" ? "createPatientCoverage" : formMode === "edit-patient" ? "updatePatient" : "createPatient"
       : module === "scheduler" ? "createAppointment"
@@ -219,6 +261,11 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     if (!actionName) return;
     const result = await action(actionName, form);
     if (result) {
+      if (module === "patients" && submitIntent === "add-coverage" && ["", "edit-patient", "coverage"].includes(submittedMode)) {
+        const savedPatientId = submittedMode === "coverage" ? String(submittedForm.patientId || "") : String(result.id || submittedForm.id || "");
+        continueWithNextCoverage(savedPatientId, submittedForm);
+        return;
+      }
       setModalOpen(false);
       setNotice(
         module === "patients" ? formMode === "responsibility" ? "DOS responsibility profile saved with an audit record."
@@ -863,6 +910,7 @@ function CoverageForm({ data, form, update }: FormProps) {
       <Input label="Subscriber DOB" name="subscriberDateOfBirth" form={form} update={update} type="date" hint="subscriberBirthSex" />
       <Select label="Subscriber sex" name="subscriberSex" form={form} update={update} hint="subscriberBirthSex" options={[["male", "Male"], ["female", "Female"], ["unknown", "Unknown"]]} />
     </div><div className="responsibility-hold"><Check label="Verify this coverage immediately after saving" name="verifyEligibility" form={form} update={update} /></div></fieldset>
+    <div className="insurance-save-actions"><div><strong>Need another policy?</strong><span>Save this insurance and continue with the next available order.</span></div><button disabled={!form.planId || !form.memberId} name="submitIntent" type="submit" value="add-coverage">Save & add another insurance →</button></div>
   </div>;
 }
 
@@ -979,7 +1027,7 @@ function PatientForm({ data, form, update }: FormProps) {
           </div>}
         </fieldset>}
 
-        {activeTab === "insurance" && <fieldset className="patient-tab-panel"><legend>Insurance policy</legend><p className="patient-section-copy">Set the normal coordination order here. Use DOS Order from the patient list whenever the order changes for a service-date range.</p><div className="patient-insurance-grid"><label className="field">Insurance plan <span><ClaimFieldHint hint={claimFieldHints.planName} /></span><select value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label><Input label="Member ID" name="memberId" form={form} update={update} hint="memberId" /><Input label="Group number" name="groupNumber" form={form} update={update} hint="groupNumber" /><Select label="Default insurance order" name="priority" form={form} update={update} options={[["primary", "Primary"], ["secondary", "Secondary"], ["tertiary", "Tertiary"], ["unassigned", "Unassigned / determine by DOS"]]} /><Select label="Relationship" name="relationship" form={form} update={update} hint="relationship" options={[["self", "Self"], ["spouse", "Spouse"], ["child", "Child"], ["other", "Other"]]} /><Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" /><Input label="Termination date" name="terminationDate" form={form} update={update} type="date" /></div><div className="patient-policy-options"><Check label="Accept assignment" name="acceptAssignment" form={form} update={update} hint="acceptAssignment" /><Check label="Release information" name="releaseOfInformation" form={form} update={update} hint="releaseInformation" /><Check label="Assignment of benefits" name="assignmentOfBenefits" form={form} update={update} hint="assignmentBenefits" /></div></fieldset>}
+        {activeTab === "insurance" && <fieldset className="patient-tab-panel"><legend>Insurance policy</legend><p className="patient-section-copy">Set the normal coordination order here. Use DOS Order from the patient list whenever the order changes for a service-date range.</p><div className="patient-insurance-grid"><label className="field">Insurance plan <span><ClaimFieldHint hint={claimFieldHints.planName} /></span><select value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label><Input label="Member ID" name="memberId" form={form} update={update} hint="memberId" /><Input label="Group number" name="groupNumber" form={form} update={update} hint="groupNumber" /><Select label="Default insurance order" name="priority" form={form} update={update} options={[["primary", "Primary"], ["secondary", "Secondary"], ["tertiary", "Tertiary"], ["unassigned", "Unassigned / determine by DOS"]]} /><Select label="Relationship" name="relationship" form={form} update={update} hint="relationship" options={[["self", "Self"], ["spouse", "Spouse"], ["child", "Child"], ["other", "Other"]]} /><Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" /><Input label="Termination date" name="terminationDate" form={form} update={update} type="date" /></div><div className="patient-policy-options"><Check label="Accept assignment" name="acceptAssignment" form={form} update={update} hint="acceptAssignment" /><Check label="Release information" name="releaseOfInformation" form={form} update={update} hint="releaseInformation" /><Check label="Assignment of benefits" name="assignmentOfBenefits" form={form} update={update} hint="assignmentBenefits" /></div><div className="insurance-save-actions"><div><strong>Add Secondary or Tertiary insurance</strong><span>Save this patient and current policy, then continue directly to another policy.</span></div><button disabled={!form.planId || !form.memberId} name="submitIntent" type="submit" value="add-coverage">Save & add another insurance →</button></div></fieldset>}
 
         {activeTab === "subscriber" && <fieldset className="patient-tab-panel"><legend>Subscriber & verification</legend><p className="patient-section-copy">Complete this section when the policyholder differs from the patient.</p><div className="patient-subscriber-grid"><Input label="Subscriber first name" name="subscriberFirstName" form={form} update={update} hint="subscriberName" /><Input label="Subscriber last name" name="subscriberLastName" form={form} update={update} hint="subscriberName" /><Input label="Subscriber DOB" name="subscriberDateOfBirth" form={form} update={update} type="date" hint="subscriberBirthSex" /><Select label="Subscriber sex" name="subscriberSex" form={form} update={update} hint="subscriberBirthSex" options={[["male", "Male"], ["female", "Female"], ["unknown", "Unknown"]]} /><div className="wide"><Input label="Subscriber address" name="subscriberAddressLine1" form={form} update={update} hint="subscriberAddress" /></div><Input label="City" name="subscriberCity" form={form} update={update} hint="subscriberAddress" /><Input label="State" name="subscriberState" form={form} update={update} hint="subscriberAddress" /><Input label="ZIP" name="subscriberPostalCode" form={form} update={update} hint="subscriberAddress" /></div><div className="eligibility-option"><Check label="Verify eligibility immediately after saving" name="verifyEligibility" form={form} update={update} /><p>PRACX sends a 270 inquiry and fills the returned payer, plan, coverage dates and benefit details. Live responses require an active eligibility adapter.</p></div></fieldset>}
 

@@ -182,6 +182,9 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(operationsWorkspace, /Default order/);
   assert.match(operationsWorkspace, /DOS order/);
   assert.match(operationsWorkspace, /coverage-order/);
+  assert.match(operationsWorkspace, /Save & add another insurance/);
+  assert.match(operationsWorkspace, /continueWithNextCoverage/);
+  assert.match(operationsWorkspace, /submitIntent/);
   assert.doesNotMatch(operationsWorkspace, /Reported order|Reported primary|Reported secondary|Reported tertiary/);
   assert.match(operationsApi, /ISA\*00/);
   assert.match(operationsApi, /claim837/);
