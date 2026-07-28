@@ -176,6 +176,10 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(operationsWorkspace, /Box 24C emergency/);
   assert.match(operationsWorkspace, /NDC 11-digit code/);
   assert.match(operationsWorkspace, /Signatures — Boxes 12, 13 and 31/);
+  assert.match(operationsWorkspace, /Default insurance order/);
+  assert.match(operationsWorkspace, /Default order/);
+  assert.match(operationsWorkspace, /DOS order/);
+  assert.match(operationsWorkspace, /coverage-order/);
   assert.doesNotMatch(operationsWorkspace, /Reported order|Reported primary|Reported secondary|Reported tertiary/);
   assert.match(operationsApi, /ISA\*00/);
   assert.match(operationsApi, /claim837/);
@@ -187,6 +191,9 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(operationsApi, /LOCAL_ZIP_DIRECTORY/);
   assert.match(operationsApi, /createResponsibilityProfile/);
   assert.match(operationsApi, /createPatientCoverage/);
+  assert.match(operationsApi, /updateCoverageOrder/);
+  assert.match(operationsApi, /The same insurance policy cannot be primary, secondary and tertiary/);
+  assert.match(operationsApi, /when 'primary' then 1 when 'secondary' then 2 when 'tertiary' then 3/);
   assert.match(operationsApi, /This DOS range overlaps/);
   assert.match(operationsApi, /claimResponsibilitySnapshots/);
   assert.match(operationsApi, /Box 11b qualifier and claim ID/);

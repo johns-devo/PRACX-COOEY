@@ -34,6 +34,13 @@ function clean(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+const COVERAGE_PRIORITIES = ["primary", "secondary", "tertiary", "unassigned"] as const;
+
+function coveragePriority(value: unknown) {
+  const priority = clean(value);
+  return COVERAGE_PRIORITIES.includes(priority as (typeof COVERAGE_PRIORITIES)[number]) ? priority : "unassigned";
+}
+
 const LOCAL_ZIP_DIRECTORY: Record<string, { city: string; state: string }> = {
   "02108": { city: "Boston", state: "MA" },
   "10022": { city: "New York", state: "NY" },
@@ -518,12 +525,20 @@ export async function POST(request: Request) {
       if (effectiveDate && terminationDate && terminationDate < effectiveDate) {
         return Response.json({ error: "Coverage termination cannot be earlier than the effective date." }, { status: 400 });
       }
+      const priority = coveragePriority(payload.priority);
+      if (priority !== "unassigned") {
+        await db.update(patientCoverages).set({ priority: "unassigned" }).where(and(
+          eq(patientCoverages.patientId, patientId),
+          eq(patientCoverages.priority, priority),
+          eq(patientCoverages.status, "active"),
+        ));
+      }
       const id = crypto.randomUUID();
       await db.insert(patientCoverages).values({
         id,
         patientId,
         planId,
-        priority: "unassigned",
+        priority,
         memberId,
         groupNumber: clean(payload.groupNumber) || plan.defaultGroupNumber || null,
         relationship: clean(payload.relationship) || "self",
@@ -551,6 +566,38 @@ export async function POST(request: Request) {
         }, { status: 201 });
       }
       return Response.json({ id }, { status: 201 });
+    }
+
+    if (action === "updateCoverageOrder") {
+      const patientId = clean(payload.patientId);
+      if (!patientId) return Response.json({ error: "Patient is required." }, { status: 400 });
+      const [patient] = await db.select().from(patients).where(eq(patients.id, patientId)).limit(1);
+      if (!patient || patient.organizationId !== DEFAULT_ORGANIZATION_ID) {
+        return Response.json({ error: "Patient not found." }, { status: 404 });
+      }
+      const selections = [
+        { id: clean(payload.primaryCoverageId), priority: "primary" },
+        { id: clean(payload.secondaryCoverageId), priority: "secondary" },
+        { id: clean(payload.tertiaryCoverageId), priority: "tertiary" },
+      ].filter((item) => item.id);
+      if (new Set(selections.map((item) => item.id)).size !== selections.length) {
+        return Response.json({ error: "The same insurance policy cannot be primary, secondary and tertiary at the same time." }, { status: 400 });
+      }
+      const activeCoverages = await db.select().from(patientCoverages).where(and(
+        eq(patientCoverages.patientId, patientId),
+        eq(patientCoverages.status, "active"),
+      ));
+      if (selections.some((selection) => !activeCoverages.some((coverage) => coverage.id === selection.id))) {
+        return Response.json({ error: "Every selected insurance policy must be active and belong to this patient." }, { status: 400 });
+      }
+      await db.update(patientCoverages).set({ priority: "unassigned" }).where(and(
+        eq(patientCoverages.patientId, patientId),
+        eq(patientCoverages.status, "active"),
+      ));
+      for (const selection of selections) {
+        await db.update(patientCoverages).set({ priority: selection.priority }).where(eq(patientCoverages.id, selection.id));
+      }
+      return Response.json({ patientId, order: selections });
     }
 
     if (action === "createResponsibilityProfile") {
@@ -836,7 +883,7 @@ export async function POST(request: Request) {
           id: coverageId,
           patientId,
           planId,
-          priority: clean(payload.priority) || "unassigned",
+          priority: coveragePriority(payload.priority),
           memberId,
           groupNumber: clean(payload.groupNumber) || null,
           relationship: clean(payload.relationship) || "self",
@@ -896,6 +943,7 @@ export async function POST(request: Request) {
       }
       const planId = clean(payload.planId);
       const memberId = clean(payload.memberId);
+      const coverageId = clean(payload.coverageId);
       if (Boolean(planId) !== Boolean(memberId)) {
         return Response.json({ error: "Insurance plan and member ID must be entered together." }, { status: 400 });
       }
@@ -928,12 +976,14 @@ export async function POST(request: Request) {
         .where(and(
           eq(patientCoverages.patientId, id),
           eq(patientCoverages.status, "active"),
+          coverageId ? eq(patientCoverages.id, coverageId) : undefined,
         ))
         .limit(1);
       if (planId && memberId) {
+        const priority = coveragePriority(payload.priority);
         const coverageValues = {
           planId,
-          priority: clean(payload.priority) || "unassigned",
+          priority,
           memberId,
           groupNumber: clean(payload.groupNumber) || null,
           relationship: clean(payload.relationship) || "self",
@@ -952,6 +1002,18 @@ export async function POST(request: Request) {
           assignmentOfBenefits: payload.assignmentOfBenefits === false ? "no" as const : "yes" as const,
           status: "active" as const,
         };
+        if (priority !== "unassigned") {
+          const samePriorityCoverages = await db.select({ id: patientCoverages.id }).from(patientCoverages).where(and(
+            eq(patientCoverages.patientId, id),
+            eq(patientCoverages.priority, priority),
+            eq(patientCoverages.status, "active"),
+          ));
+          for (const coverage of samePriorityCoverages) {
+            if (coverage.id !== existingCoverage?.id) {
+              await db.update(patientCoverages).set({ priority: "unassigned" }).where(eq(patientCoverages.id, coverage.id));
+            }
+          }
+        }
         if (existingCoverage) {
           await db.update(patientCoverages).set(coverageValues).where(eq(patientCoverages.id, existingCoverage.id));
         } else {
@@ -1231,7 +1293,12 @@ export async function POST(request: Request) {
         ? await db.select().from(responsibilitySources).where(eq(responsibilitySources.profileId, responsibilityProfile.id)).orderBy(asc(responsibilitySources.sequence))
         : [];
       const profilePrimary = profileSources.find((source) => source.role === "primary");
-      const [fallbackCoverage] = await db.select().from(patientCoverages).where(and(eq(patientCoverages.patientId, encounter.patientId), eq(patientCoverages.status, "active"))).limit(1);
+      const [fallbackCoverage] = await db
+        .select()
+        .from(patientCoverages)
+        .where(and(eq(patientCoverages.patientId, encounter.patientId), eq(patientCoverages.status, "active")))
+        .orderBy(sql`case ${patientCoverages.priority} when 'primary' then 1 when 'secondary' then 2 when 'tertiary' then 3 else 4 end`)
+        .limit(1);
       const coverageId = profilePrimary?.coverageId || fallbackCoverage?.id || null;
       const [coverage] = coverageId
         ? await db.select().from(patientCoverages).where(eq(patientCoverages.id, coverageId)).limit(1)
