@@ -2,6 +2,38 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+test("upgrades legacy coverage and eligibility tables before saving new fields", async () => {
+  const databaseBootstrap = await readFile(
+    new URL("../db/index.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    databaseBootstrap,
+    /ALTER TABLE patient_coverages ADD COLUMN coverage_type text DEFAULT 'health' NOT NULL/,
+  );
+  assert.match(
+    databaseBootstrap,
+    /ALTER TABLE patient_coverages ADD COLUMN property_casualty_claim_number text/,
+  );
+  assert.match(
+    databaseBootstrap,
+    /ALTER TABLE patient_coverages ADD COLUMN claim_address_line_1 text/,
+  );
+  assert.match(
+    databaseBootstrap,
+    /ALTER TABLE patient_coverages ADD COLUMN amount_used text DEFAULT '0\.00' NOT NULL/,
+  );
+  assert.match(
+    databaseBootstrap,
+    /ALTER TABLE patient_coverages ADD COLUMN authorization_number text/,
+  );
+  assert.match(
+    databaseBootstrap,
+    /ALTER TABLE eligibility_checks ADD COLUMN response_details text/,
+  );
+});
+
 test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local authentication", async () => {
   const [workspace, providerWorkspace, operationsWorkspace, operationsApi, claimHint, cms1500, providerApi, referringApi, dashboard, login, auth, onboarding, layout, schema, migration, providerMigration, operationsMigration, responsibilityMigration, cmsQualifierMigration, box19Migration, responsibilityStatusMigration, currentClaimMigration, claimConfigWorkspace, claimConfigApi, claimConfigDefaults, claimConfigPage, claimConfigMigration, eligibilityUpdateMigration, coverageResponsibilityMigration] = await Promise.all([
     readFile(new URL("../app/FacilityWorkspace.tsx", import.meta.url), "utf8"),
