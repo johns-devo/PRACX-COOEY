@@ -1,6 +1,10 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import type { LocalUser } from "../lib/auth";
+import { claimFieldHints } from "../lib/cms1500";
+import { ClaimFieldHint } from "./ClaimFieldHint";
 
 type Facility = {
   id: string;
@@ -50,32 +54,40 @@ const initialForm = {
 };
 
 const navSections = [
-  "Dashboard",
-  "Scheduler",
-  "Patients",
-  "Clinical",
-  "Claims",
-  "Payments",
-  "Reports",
+  { label: "Dashboard", href: "/dashboard" },
+  { label: "Patients", href: "/patients" },
+  { label: "Scheduler", href: "/scheduler" },
+  { label: "Eligibility", href: "/eligibility" },
+  { label: "Clinical", href: "/clinical" },
+  { label: "Claims", href: "/claims" },
+  { label: "Payments", href: "/payments" },
+  { label: "Reports", href: "/reports" },
 ];
 
 const setupItems = [
-  "Organization",
-  "Facilities",
-  "Providers",
-  "Referring providers",
-  "Payers & plans",
-  "Fee schedules",
-  "Procedure codes",
+  { label: "Organization", href: "#" },
+  { label: "Facilities", href: "/setup" },
+  { label: "Providers", href: "/setup/providers" },
+  { label: "Referring providers", href: "/setup/referring-providers" },
+  { label: "Payers & plans", href: "/setup/payers" },
+  { label: "Fee schedules", href: "/setup/fee-schedules" },
+  { label: "Procedure codes", href: "/setup/procedure-codes" },
 ];
 
-export function FacilityWorkspace() {
+export function FacilityWorkspace({
+  currentUser,
+  onboardingCompleted,
+}: {
+  currentUser: LocalUser;
+  onboardingCompleted: boolean;
+}) {
   const [data, setData] = useState<FacilityResponse | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [isModalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(initialForm);
   const [isSaving, setSaving] = useState(false);
+  const [isCompleting, setCompleting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -127,6 +139,31 @@ export function FacilityWorkspace() {
 
   const total = data?.summary.total ?? 0;
   const active = data?.summary.active ?? 0;
+  const initials = currentUser.fullName
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.assign("/");
+  }
+
+  async function finishSetup() {
+    setCompleting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/onboarding/complete", { method: "POST" });
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(body.error || "Unable to complete setup.");
+      window.location.assign("/dashboard");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to complete setup.");
+      setCompleting(false);
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -142,24 +179,25 @@ export function FacilityWorkspace() {
         <nav aria-label="Primary navigation">
           <p className="nav-label">Workspace</p>
           {navSections.map((item) => (
-            <button className="nav-item" key={item} type="button">
+            <Link className="nav-item" href={item.href} key={item.label}>
               <span className="nav-dot" aria-hidden="true" />
-              {item}
-            </button>
+              {item.label}
+            </Link>
           ))}
           <p className="nav-label setup-label">Configuration</p>
-          <button className="nav-item active" type="button">
+          <Link className="nav-item active" href="/setup">
             <span className="nav-dot" aria-hidden="true" />
             Practice setup
-          </button>
+          </Link>
         </nav>
 
         <div className="sidebar-footer">
-          <span className="avatar">JR</span>
-          <div>
-            <strong>Administrator</strong>
-            <small>Practice owner</small>
+          <span className="avatar">{initials}</span>
+          <div className="sidebar-user">
+            <strong>{currentUser.fullName}</strong>
+            <small>{currentUser.role}</small>
           </div>
+          <button aria-label="Sign out" className="signout-button" onClick={signOut} type="button">↗</button>
         </div>
       </aside>
 
@@ -181,17 +219,43 @@ export function FacilityWorkspace() {
         </header>
 
         <section className="content">
+          {!onboardingCompleted && (
+            <section className="onboarding-banner">
+              <div className="onboarding-progress">1</div>
+              <div>
+                <span className="micro-label">Initial organization setup</span>
+                <h2>Complete the foundation, then enter your dashboard</h2>
+                <p>
+                  This setup appears only until the organization is activated. You can return
+                  here later from Configuration.
+                </p>
+              </div>
+              <div className="onboarding-actions">
+                <span>Foundation data</span>
+                <strong>{total > 0 ? "Ready to continue" : "Facility required"}</strong>
+                <button
+                  className="primary-button"
+                  disabled={isCompleting || total < 1}
+                  onClick={finishSetup}
+                  type="button"
+                >
+                  {isCompleting ? "Completing…" : "Finish initial setup"}
+                </button>
+              </div>
+            </section>
+          )}
+
           <div className="section-tabs" role="tablist" aria-label="Practice setup sections">
             {setupItems.map((item) => (
-              <button
-                aria-selected={item === "Facilities"}
-                className={item === "Facilities" ? "selected" : ""}
-                key={item}
+              <Link
+                aria-selected={item.label === "Facilities"}
+                className={item.label === "Facilities" ? "selected" : ""}
+                href={item.href}
+                key={item.label}
                 role="tab"
-                type="button"
               >
-                {item}
-              </button>
+                {item.label}
+              </Link>
             ))}
           </div>
 
@@ -341,7 +405,7 @@ export function FacilityWorkspace() {
                 <legend>Facility identity</legend>
                 <div className="form-grid">
                   <label className="field span-2">
-                    Facility name <b>*</b>
+                    Facility name <span><b>*</b><ClaimFieldHint hint={claimFieldHints.facilityName} /></span>
                     <input
                       autoFocus
                       onChange={(event) => updateField("name", event.target.value)}
@@ -351,7 +415,7 @@ export function FacilityWorkspace() {
                     />
                   </label>
                   <label className="field">
-                    Facility code <b>*</b>
+                    Facility code <span><b>*</b><ClaimFieldHint hint={claimFieldHints.facilityCode} /></span>
                     <input
                       maxLength={12}
                       onChange={(event) => updateField("code", event.target.value.toUpperCase())}
@@ -361,7 +425,7 @@ export function FacilityWorkspace() {
                     />
                   </label>
                   <label className="field">
-                    Facility type <b>*</b>
+                    Facility type <span><b>*</b><ClaimFieldHint hint={claimFieldHints.facilityType} /></span>
                     <select onChange={(event) => updateField("facilityType", event.target.value)} value={form.facilityType}>
                       <option>Medical office</option>
                       <option>Independent clinic</option>
@@ -371,7 +435,7 @@ export function FacilityWorkspace() {
                     </select>
                   </label>
                   <label className="field">
-                    Facility NPI
+                    Facility NPI <ClaimFieldHint hint={claimFieldHints.facilityNpi} />
                     <input
                       inputMode="numeric"
                       maxLength={10}
@@ -381,7 +445,7 @@ export function FacilityWorkspace() {
                     />
                   </label>
                   <label className="field">
-                    Phone
+                    Phone <ClaimFieldHint hint={claimFieldHints.facilityPhone} />
                     <input onChange={(event) => updateField("phone", event.target.value)} placeholder="(555) 000-0000" value={form.phone} />
                   </label>
                 </div>
@@ -391,11 +455,11 @@ export function FacilityWorkspace() {
                 <legend>Primary service location</legend>
                 <div className="form-grid">
                   <label className="field">
-                    Location name <b>*</b>
+                    Location name <span><b>*</b><ClaimFieldHint hint={claimFieldHints.serviceLocation} /></span>
                     <input onChange={(event) => updateField("locationName", event.target.value)} required value={form.locationName} />
                   </label>
                   <label className="field">
-                    Place of service <b>*</b>
+                    Place of service <span><b>*</b><ClaimFieldHint hint={claimFieldHints.placeOfService} /></span>
                     <select onChange={(event) => updateField("placeOfServiceCode", event.target.value)} value={form.placeOfServiceCode}>
                       <option value="11">11 — Office</option>
                       <option value="22">22 — Outpatient hospital</option>
@@ -404,20 +468,20 @@ export function FacilityWorkspace() {
                     </select>
                   </label>
                   <label className="field span-2">
-                    Address line 1 <b>*</b>
+                    Address line 1 <span><b>*</b><ClaimFieldHint hint={claimFieldHints.serviceLocation} /></span>
                     <input onChange={(event) => updateField("addressLine1", event.target.value)} placeholder="Street address" required value={form.addressLine1} />
                   </label>
                   <label className="field">
-                    City <b>*</b>
+                    City <span><b>*</b><ClaimFieldHint hint={claimFieldHints.serviceLocation} /></span>
                     <input onChange={(event) => updateField("city", event.target.value)} required value={form.city} />
                   </label>
                   <div className="field-row">
                     <label className="field compact">
-                      State <b>*</b>
+                      State <span><b>*</b><ClaimFieldHint hint={claimFieldHints.serviceLocation} /></span>
                       <input maxLength={2} onChange={(event) => updateField("state", event.target.value.toUpperCase())} required value={form.state} />
                     </label>
                     <label className="field">
-                      ZIP code <b>*</b>
+                      ZIP code <span><b>*</b><ClaimFieldHint hint={claimFieldHints.serviceLocation} /></span>
                       <input maxLength={10} onChange={(event) => updateField("postalCode", event.target.value)} required value={form.postalCode} />
                     </label>
                   </div>

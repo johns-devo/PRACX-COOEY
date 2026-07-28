@@ -1,13 +1,11 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getLocalUserByToken, SESSION_COOKIE } from "../lib/auth";
-import { LoginScreen } from "./LoginScreen";
+import { OperationsWorkspace, type OperationsModule } from "./OperationsWorkspace";
 
-export const dynamic = "force-dynamic";
-
-export default async function Home() {
+export async function AuthenticatedOperationsPage({ module }: { module: OperationsModule }) {
   const cookieStore = await cookies();
   const user = await getLocalUserByToken(cookieStore.get(SESSION_COOKIE)?.value);
-  if (user) redirect("/dashboard");
-  return <LoginScreen />;
+  if (!user) redirect("/");
+  return <OperationsWorkspace currentUser={user} module={module} />;
 }

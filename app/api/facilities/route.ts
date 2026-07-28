@@ -1,6 +1,7 @@
 import { and, asc, eq, like, or, sql } from "drizzle-orm";
 import { ensureCoreSchema, getDb } from "../../../db";
 import { facilities, organizations, serviceLocations } from "../../../db/schema";
+import { getLocalUserFromRequest } from "../../../lib/auth";
 
 const DEFAULT_ORGANIZATION_ID = "org_pracx_health";
 
@@ -44,6 +45,9 @@ function facilityError(error: unknown) {
 export async function GET(request: Request) {
   try {
     await ensureCoreSchema();
+    if (!(await getLocalUserFromRequest(request))) {
+      return Response.json({ error: "Authentication required." }, { status: 401 });
+    }
     const url = new URL(request.url);
     const search = clean(url.searchParams.get("search"));
     const status = clean(url.searchParams.get("status"));
@@ -123,6 +127,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await ensureCoreSchema();
+    if (!(await getLocalUserFromRequest(request))) {
+      return Response.json({ error: "Authentication required." }, { status: 401 });
+    }
     const payload = (await request.json()) as FacilityPayload;
     const required = {
       name: clean(payload.name),
