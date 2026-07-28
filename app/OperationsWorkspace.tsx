@@ -518,15 +518,14 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
                 ["DOS profiles", String(data.responsibilityProfiles.filter((row) => value(row, "status") === "active").length), "Date-specific responsibility"],
                 ["Coverage conflicts", String(data.responsibilityProfiles.filter((row) => ["disputed", "under_investigation"].includes(value(row, "verificationStatus"))).length), "Need billing review"],
               ]} />
-              <TablePanel title="Patient directory" description="Search demographics, account and insurance readiness." search={search} setSearch={setSearch}>
-                <table><thead><tr><th>Patient</th><th>Account</th><th>Date of birth</th><th>Contact</th><th>Coverages</th><th>Eligibility</th><th>Status</th><th>Actions</th></tr></thead>
+              <TablePanel title="Patient directory" description="A concise patient index. Open Edit to view demographics, contact and insurance details." search={search} setSearch={setSearch}>
+                <table><thead><tr><th>Patient</th><th>Account</th><th>Date of birth</th><th>Eligibility</th><th>Status</th><th>Actions</th></tr></thead>
                   <tbody>{filteredPatients.map((patient) => {
                     const patientCoverages = data.coverages.filter((item) => value(item, "patientId") === value(patient, "id") && value(item, "status") === "active");
                     const orderRank: Record<string, number> = { primary: 1, secondary: 2, tertiary: 3, unassigned: 4 };
                     const coverage = patientCoverages.sort((left, right) => (orderRank[value(left, "priority")] || 4) - (orderRank[value(right, "priority")] || 4))[0];
-                    const plan = data.plans.find((item) => value(item, "id") === value(coverage || {}, "planId"));
                     const latestEligibility = data.eligibility.find((item) => value(item, "patientId") === value(patient, "id"));
-                    return <tr key={value(patient, "id")}><td><PersonCell row={patient} /></td><td className="mono">{value(patient, "accountNumber")}</td><td>{shortDate(value(patient, "dateOfBirth"))}</td><td><strong className="location-name">{value(patient, "phone") || "No phone"}</strong><small className="address">{value(patient, "email") || `${value(patient, "city")}, ${value(patient, "state")}`}</small></td><td><strong className="location-name">{value(plan || {}, "name") || "Self pay"}</strong><small className="address">{coverage ? `${value(coverage, "priority").replaceAll("_", " ")} · ` : ""}{value(coverage || {}, "memberId") || "No member ID"} · {patientCoverages.length} active</small></td><td><Status value={value(latestEligibility || {}, "status") || "not checked"} /></td><td><Status value={value(patient, "status")} /></td><td><div className="row-actions"><button onClick={() => editPatient(patient, coverage)} type="button">Edit</button><button disabled={!coverage || isSaving} onClick={() => verifyPatientEligibility(value(patient, "id"))} type="button">Check eligibility</button></div></td></tr>;
+                    return <tr key={value(patient, "id")}><td><PersonCell row={patient} /></td><td className="mono">{value(patient, "accountNumber")}</td><td>{shortDate(value(patient, "dateOfBirth"))}</td><td><Status value={value(latestEligibility || {}, "status") || "not checked"} /></td><td><Status value={value(patient, "status")} /></td><td><div className="row-actions"><button onClick={() => editPatient(patient, coverage)} type="button">Edit</button><button disabled={!coverage || isSaving} onClick={() => verifyPatientEligibility(value(patient, "id"))} type="button">Check eligibility</button></div></td></tr>;
                   })}</tbody></table>
               </TablePanel>
               <TablePanel title="Billing responsibility timeline" description="Primary, secondary, tertiary and guarantor assignments by DOS range and billing context.">
@@ -708,7 +707,7 @@ function TablePanel({ title, description, search, setSearch, children }: { title
 function PersonCell({ row }: { row: DataRow }) {
   const first = value(row, "firstName");
   const last = value(row, "lastName");
-  return <div className="facility-name"><span>{first[0]}{last[0]}</span><div><strong>{first} {value(row, "middleName")} {last}</strong><small>{value(row, "sex")} · {value(row, "city")}, {value(row, "state")}</small></div></div>;
+  return <div className="facility-name"><span>{first[0]}{last[0]}</span><div><strong>{first} {value(row, "middleName")} {last}</strong></div></div>;
 }
 
 function Status({ value: status }: { value: string }) {

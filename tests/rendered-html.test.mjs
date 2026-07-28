@@ -182,6 +182,9 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.doesNotMatch(operationsWorkspace, />Add coverage</);
   assert.doesNotMatch(operationsWorkspace, />Default order</);
   assert.doesNotMatch(operationsWorkspace, />DOS order</);
+  assert.doesNotMatch(operationsWorkspace, /Date of birth<\/th><th>Contact/);
+  assert.doesNotMatch(operationsWorkspace, /<th>Contact<\/th><th>Coverages/);
+  assert.match(operationsWorkspace, /Open Edit to view demographics, contact and insurance details/);
   assert.match(operationsWorkspace, /coverage-order/);
   assert.match(operationsWorkspace, /Save & add another insurance/);
   assert.match(operationsWorkspace, /continueWithNextCoverage/);
