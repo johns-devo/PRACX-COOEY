@@ -184,7 +184,12 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(operationsWorkspace, /Box 24C emergency/);
   assert.match(operationsWorkspace, /NDC 11-digit code/);
   assert.match(operationsWorkspace, /Signatures — Boxes 12, 13 and 31/);
-  assert.match(operationsWorkspace, /Default insurance order/);
+  assert.match(operationsWorkspace, /Billing position/);
+  assert.match(operationsWorkspace, /Primary responsibility/);
+  assert.match(operationsWorkspace, /Guarantor/);
+  assert.match(operationsWorkspace, /Remaining \/ final balance/);
+  assert.match(cms1500, /accidentRelated/);
+  assert.match(cms1500, /legalResponsibility/);
   assert.doesNotMatch(operationsWorkspace, />Add coverage</);
   assert.doesNotMatch(operationsWorkspace, />Default order</);
   assert.doesNotMatch(operationsWorkspace, />DOS order</);

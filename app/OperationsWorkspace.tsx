@@ -204,6 +204,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
       groupNumber: "",
       coverageType: "health",
       priority: nextOrder,
+      balanceRole: "final_balance",
       relationship: "self",
       subscriberFirstName: firstName,
       subscriberLastName: lastName,
@@ -717,7 +718,7 @@ function TablePanel({ title, description, search, setSearch, children }: { title
 function SelectedPatientInsurance({ data, patientId, isSaving, onCheck }: { data: WorkspaceData; patientId: string; isSaving: boolean; onCheck: (patientId: string, coverageId?: string) => void }) {
   const patient = data.patients.find((item) => value(item, "id") === patientId);
   if (!patient) return <section className="selected-insurance-panel empty"><strong>Select a patient</strong><span>Click a patient name to view insurance policies and coverage details.</span></section>;
-  const rank: Record<string, number> = { primary: 1, secondary: 2, tertiary: 3, unassigned: 4 };
+  const rank: Record<string, number> = { primary: 1, secondary: 2, tertiary: 3, guarantor: 4, final_balance: 5, unassigned: 6 };
   const coverages = data.coverages
     .filter((item) => value(item, "patientId") === patientId)
     .sort((left, right) => (rank[value(left, "priority")] || 4) - (rank[value(right, "priority")] || 4));
@@ -888,12 +889,25 @@ const coverageTypeOptions: [string, string][] = [
   ["other_responsibility", "Other responsibility"],
 ];
 
+const responsibilityPositionOptions: [string, string][] = [
+  ["primary", "Primary responsibility"],
+  ["secondary", "Secondary responsibility"],
+  ["tertiary", "Tertiary responsibility"],
+  ["guarantor", "Guarantor"],
+  ["final_balance", "Remaining / final balance"],
+  ["unassigned", "Determine by DOS"],
+];
+
+function ResponsibilityPositionField({ form, update }: SimpleFormProps) {
+  const isLegal = ["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || ""));
+  return <Select label="Billing position" name={isLegal ? "balanceRole" : "priority"} form={form} update={update} required hint="billingPosition" options={responsibilityPositionOptions} />;
+}
+
 function CoverageTypeFields({ form, update }: SimpleFormProps) {
   const type = String(form.coverageType || "health");
   const isInsurance = !["lop", "attorney", "self_pay", "other_responsibility"].includes(type);
   const isPropertyCasualty = ["auto_pip", "workers_comp", "liability"].includes(type);
-  if (!isInsurance) return <section className="coverage-type-section"><h3>{type === "lop" ? "LOP and legal responsibility" : "Responsible party"}</h3><p className="form-guidance">This record controls balance responsibility and legal follow-up. It is not transmitted as an insurance payer on the 837P.</p><div className="form-grid">
-    <Select label="Balance role" name="balanceRole" form={form} update={update} options={[["final_balance", "Remaining / final balance"], ["secondary", "After primary payer"], ["tertiary", "After secondary payer"], ["direct", "Direct responsibility"]]} />
+  if (!isInsurance) return <section className="coverage-type-section"><h3>{type === "lop" ? "LOP and legal responsibility" : "Responsible party"} <ClaimFieldHint hint={claimFieldHints.legalResponsibility} /></h3><p className="form-guidance">This record controls balance responsibility and legal follow-up. It is not transmitted as an insurance payer on the 837P.</p><div className="form-grid">
     {type !== "self_pay" && <Input label="Law firm / organization" name="organizationName" form={form} update={update} required={type === "lop" || type === "attorney"} />}
     {type !== "self_pay" && <Input label="Attorney / contact name" name="attorneyName" form={form} update={update} required={type === "lop" || type === "attorney"} />}
     {type !== "self_pay" && <Input label="Case number" name="caseNumber" form={form} update={update} required={type === "attorney"} />}
@@ -916,17 +930,17 @@ function CoverageTypeFields({ form, update }: SimpleFormProps) {
   </div></section>;
   if (!isPropertyCasualty) return null;
   return <section className="coverage-type-section"><h3>{type === "auto_pip" ? "PIP / auto claim details" : type === "workers_comp" ? "Workers’ compensation details" : "Liability claim details"}</h3><p className="form-guidance">PRACX uses these values for CMS-1500 accident fields and the applicable 837P property-casualty segments. Adjuster and limit information remains available for follow-up.</p><div className="form-grid">
-    <Input label="Property-casualty claim number" name="propertyCasualtyClaimNumber" form={form} update={update} required={type === "auto_pip" || type === "workers_comp"} />
-    <Input label="Accident / injury date" name="accidentDate" form={form} update={update} required={type === "auto_pip"} type="date" />
-    <Input label="Accident state" name="accidentState" form={form} update={update} required={type === "auto_pip"} placeholder="FL" />
-    <Input label="Authorization number" name="authorizationNumber" form={form} update={update} />
+    <Input label="Property-casualty claim number" name="propertyCasualtyClaimNumber" form={form} update={update} required={type === "auto_pip" || type === "workers_comp"} hint="otherClaimId" />
+    <Input label="Accident / injury date" name="accidentDate" form={form} update={update} required={type === "auto_pip"} type="date" hint="otherDate" />
+    <Input label="Accident state" name="accidentState" form={form} update={update} required={type === "auto_pip"} placeholder="FL" hint="accidentRelated" />
+    <Input label="Authorization number" name="authorizationNumber" form={form} update={update} hint="priorAuthorization" />
     <Input label="Adjuster name" name="adjusterName" form={form} update={update} />
     <Input label="Adjuster phone" name="adjusterPhone" form={form} update={update} />
     <Input label="Adjuster email" name="adjusterEmail" form={form} update={update} type="email" />
     <Input label="Adjuster fax" name="adjusterFax" form={form} update={update} />
-    <Input label="Coverage limit" name="coverageLimit" form={form} update={update} type="number" />
-    <Input label="Amount used" name="amountUsed" form={form} update={update} type="number" />
-    <div className="span-2"><Input label="Property-casualty claim mailing address" name="claimAddressLine1" form={form} update={update} /></div>
+    <Input label="Coverage limit" name="coverageLimit" form={form} update={update} type="number" hint="coverageFinancials" />
+    <Input label="Amount used" name="amountUsed" form={form} update={update} type="number" hint="coverageFinancials" />
+    <div className="span-2"><Input label="Property-casualty claim mailing address" name="claimAddressLine1" form={form} update={update} hint="payerClaimAddress" /></div>
     <Input label="City" name="claimCity" form={form} update={update} />
     <Input label="State" name="claimState" form={form} update={update} />
     <Input label="ZIP" name="claimPostalCode" form={form} update={update} />
@@ -947,19 +961,18 @@ function CoverageForm({ data, form, update }: FormProps) {
       const payer = data.payers.find((item) => value(item, "id") === value(plan || {}, "payerId"));
       return <article key={value(coverage, "id")}><span>{value(coverage, "priority").replaceAll("_", " ")} default</span><strong>{value(payer || {}, "name")} · {value(plan || {}, "name")}</strong><small>{value(coverage, "memberId")} · {value(coverage, "status")}</small></article>;
     })}</div>}
-    <fieldset><legend>Coverage or responsibility type</legend><div className="form-grid"><Select label="Type" name="coverageType" form={form} update={update} required options={coverageTypeOptions} /></div></fieldset>
+    <fieldset><legend>Coverage or responsibility type</legend><div className="form-grid"><Select label="Type" name="coverageType" form={form} update={update} required hint="insuranceType" options={coverageTypeOptions} /><ResponsibilityPositionField form={form} update={update} /></div></fieldset>
+    <CoverageTypeFields form={form} update={update} />
     {!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && <><fieldset><legend>Policy information</legend><div className="form-grid">
       <label className="field">Insurance plan <span><b>*</b><ClaimFieldHint hint={claimFieldHints.planName} /></span><select required value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label>
       <Input label="Member ID" name="memberId" form={form} update={update} required hint="memberId" />
       <Input label="Group number" name="groupNumber" form={form} update={update} hint="groupNumber" />
-      <Select label="Default insurance order" name="priority" form={form} update={update} required options={[["primary", "Primary"], ["secondary", "Secondary"], ["tertiary", "Tertiary"], ["unassigned", "Unassigned / determine by DOS"]]} />
       <Select label="Relationship" name="relationship" form={form} update={update} required hint="relationship" options={[["self", "Self"], ["spouse", "Spouse"], ["child", "Child"], ["other", "Other"]]} />
       <Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" />
       <Input label="Termination date" name="terminationDate" form={form} update={update} type="date" />
     </div></fieldset>
     <fieldset><legend>Subscriber</legend><SubscriberFields form={form} update={update} /><div className="responsibility-hold"><Check label="Verify this coverage immediately after saving" name="verifyEligibility" form={form} update={update} /></div></fieldset>
     </>}
-    <CoverageTypeFields form={form} update={update} />
     <div className="insurance-save-actions"><div><strong>Need another coverage source?</strong><span>Save this record and continue with another insurance or responsibility source.</span></div><button disabled={!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && (!form.planId || !form.memberId)} name="submitIntent" type="submit" value="add-coverage">Save & add another →</button></div>
   </div>;
 }
@@ -1094,7 +1107,7 @@ function PatientForm({ data, form, update }: FormProps) {
           </div>}
         </fieldset>}
 
-        {activeTab === "insurance" && <fieldset className="patient-tab-panel"><legend>Coverage & responsibility</legend><p className="patient-section-copy">Choose what is responsible for payment. Insurance, PIP and workers’ compensation map to claims; LOP and attorney records remain legal balance sources.</p><div className="patient-insurance-grid"><Select label="Coverage / responsibility type" name="coverageType" form={form} update={update} required options={coverageTypeOptions} /></div>{!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && <><div className="patient-insurance-grid"><label className="field">Insurance plan <span><ClaimFieldHint hint={claimFieldHints.planName} /></span><select value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label><Input label="Member ID" name="memberId" form={form} update={update} hint="memberId" /><Input label="Group number" name="groupNumber" form={form} update={update} hint="groupNumber" /><Select label="Default insurance order" name="priority" form={form} update={update} options={[["primary", "Primary"], ["secondary", "Secondary"], ["tertiary", "Tertiary"], ["unassigned", "Unassigned / determine by DOS"]]} /><Select label="Relationship" name="relationship" form={form} update={update} hint="relationship" options={[["self", "Self"], ["spouse", "Spouse"], ["child", "Child"], ["other", "Other"]]} /><Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" /><Input label="Termination date" name="terminationDate" form={form} update={update} type="date" /></div><div className="patient-policy-options"><Check label="Accept assignment" name="acceptAssignment" form={form} update={update} hint="acceptAssignment" /><Check label="Release information" name="releaseOfInformation" form={form} update={update} hint="releaseInformation" /><Check label="Assignment of benefits" name="assignmentOfBenefits" form={form} update={update} hint="assignmentBenefits" /></div></>}<CoverageTypeFields form={form} update={update} /><div className="insurance-save-actions"><div><strong>Add another coverage source</strong><span>Save this patient and current record, then continue with another policy or legal responsibility.</span></div><button disabled={!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && (!form.planId || !form.memberId)} name="submitIntent" type="submit" value="add-coverage">Save & add another →</button></div></fieldset>}
+        {activeTab === "insurance" && <fieldset className="patient-tab-panel"><legend>Coverage & responsibility</legend><p className="patient-section-copy">Choose the responsibility type and billing position independently. Every type can be primary, secondary, tertiary, guarantor, final balance or controlled by a DOS profile.</p><div className="patient-insurance-grid"><Select label="Coverage / responsibility type" name="coverageType" form={form} update={update} required hint="insuranceType" options={coverageTypeOptions} /><ResponsibilityPositionField form={form} update={update} /></div><CoverageTypeFields form={form} update={update} />{!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && <><div className="patient-insurance-grid"><label className="field">Insurance plan <span><ClaimFieldHint hint={claimFieldHints.planName} /></span><select value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label><Input label="Member ID" name="memberId" form={form} update={update} hint="memberId" /><Input label="Group number" name="groupNumber" form={form} update={update} hint="groupNumber" /><Select label="Relationship" name="relationship" form={form} update={update} hint="relationship" options={[["self", "Self"], ["spouse", "Spouse"], ["child", "Child"], ["other", "Other"]]} /><Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" /><Input label="Termination date" name="terminationDate" form={form} update={update} type="date" /></div><div className="patient-policy-options"><Check label="Accept assignment" name="acceptAssignment" form={form} update={update} hint="acceptAssignment" /><Check label="Release information" name="releaseOfInformation" form={form} update={update} hint="releaseInformation" /><Check label="Assignment of benefits" name="assignmentOfBenefits" form={form} update={update} hint="assignmentBenefits" /></div></>}<div className="insurance-save-actions"><div><strong>Add another coverage source</strong><span>Save this patient and current record, then continue with another policy or legal responsibility.</span></div><button disabled={!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && (!form.planId || !form.memberId)} name="submitIntent" type="submit" value="add-coverage">Save & add another →</button></div></fieldset>}
 
         {activeTab === "subscriber" && <fieldset className="patient-tab-panel"><legend>Subscriber & verification</legend>{["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) ? <p className="patient-section-copy">This responsibility type does not create an insurance subscriber or eligibility inquiry.</p> : <><p className="patient-section-copy">Confirm whether the patient is the policy subscriber. Manual subscriber fields appear only when they are different.</p><SubscriberFields form={form} update={update} /><div className="eligibility-option"><Check label="Verify eligibility immediately after saving" name="verifyEligibility" form={form} update={update} /><p>PRACX sends a 270 inquiry and fills the returned payer, plan, coverage dates and benefit details. Live responses require an active eligibility adapter.</p></div></>}</fieldset>}
 

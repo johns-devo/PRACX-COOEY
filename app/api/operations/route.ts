@@ -36,7 +36,7 @@ function clean(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-const COVERAGE_PRIORITIES = ["primary", "secondary", "tertiary", "unassigned"] as const;
+const COVERAGE_PRIORITIES = ["primary", "secondary", "tertiary", "guarantor", "final_balance", "unassigned"] as const;
 
 function coveragePriority(value: unknown) {
   const priority = clean(value);
@@ -264,7 +264,7 @@ async function performEligibilityCheck(
       eq(patientCoverages.status, "active"),
       selectedCoverageId ? eq(patientCoverages.id, selectedCoverageId) : undefined,
     ))
-    .orderBy(sql`case ${patientCoverages.priority} when 'primary' then 1 when 'secondary' then 2 when 'tertiary' then 3 else 4 end`)
+    .orderBy(sql`case ${patientCoverages.priority} when 'primary' then 1 when 'secondary' then 2 when 'tertiary' then 3 when 'guarantor' then 4 when 'final_balance' then 5 else 6 end`)
     .limit(1);
   if (!coverage) return { error: "No active coverage is available for this patient." };
 
@@ -1571,7 +1571,7 @@ export async function POST(request: Request) {
         .select()
         .from(patientCoverages)
         .where(and(eq(patientCoverages.patientId, encounter.patientId), eq(patientCoverages.status, "active")))
-        .orderBy(sql`case ${patientCoverages.priority} when 'primary' then 1 when 'secondary' then 2 when 'tertiary' then 3 else 4 end`)
+        .orderBy(sql`case ${patientCoverages.priority} when 'primary' then 1 when 'secondary' then 2 when 'tertiary' then 3 when 'guarantor' then 4 when 'final_balance' then 5 else 6 end`)
         .limit(1);
       const coverageId = responsibilityProfile ? profileClaimSource?.coverageId || null : fallbackCoverage?.id || null;
       const [coverage] = coverageId

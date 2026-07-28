@@ -98,6 +98,12 @@ export const claimFieldHints = {
     detail: "For property and casualty claims, qualifier Y4 identifies the agency/property-casualty claim number. Required when known for workers’ compensation or property/casualty claims.",
     type: "conditional",
   },
+  accidentRelated: {
+    box: "10a–10c",
+    title: "Condition related to accident or employment",
+    detail: "PIP maps the auto-accident indicator and two-letter accident state to Box 10b. Workers’ compensation maps the employment-related indicator to Box 10a.",
+    type: "conditional",
+  },
   currentIllnessDate: {
     box: "14",
     title: "Current illness, injury or pregnancy date",
@@ -109,6 +115,36 @@ export const claimFieldHints = {
     title: "Other related date",
     detail: "Reports a treatment or condition date with qualifier 454, 304, 453, 439, 455, 471, 090, 091 or 444.",
     type: "conditional",
+  },
+  priorAuthorization: {
+    box: "23",
+    title: "Prior authorization or referral number",
+    detail: "Reports the payer-assigned authorization, referral, or other payer-directed identifier when required.",
+    type: "conditional",
+  },
+  payerClaimAddress: {
+    box: "Carrier / electronic payer routing",
+    title: "Property-casualty claim address",
+    detail: "Used for payer routing, correspondence and paper-claim destination. It is not printed in a numbered CMS-1500 patient field.",
+    type: "operational",
+  },
+  coverageFinancials: {
+    box: "Internal responsibility control",
+    title: "Coverage limit and exhaustion",
+    detail: "Operational values used to determine when the next responsible source becomes active. These amounts are not printed directly on the CMS-1500.",
+    type: "operational",
+  },
+  legalResponsibility: {
+    box: "Not an insurance claim field",
+    title: "LOP, attorney or guarantor responsibility",
+    detail: "Stored for balance routing and legal follow-up. It is not transmitted as an 837P insurance payer unless an actual payer policy is separately recorded.",
+    type: "operational",
+  },
+  billingPosition: {
+    box: "837P SBR01 / internal DOS order",
+    title: "Responsibility sequence",
+    detail: "Primary, secondary and tertiary positions drive claim coordination. Guarantor and final-balance positions remain internal until a claimable payer is selected.",
+    type: "electronic",
   },
   referringQualifier: {
     box: "17",
