@@ -166,6 +166,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
   const [selectedPatientId, setSelectedPatientId] = useState("");
   const [eligibilityReview, setEligibilityReview] = useState<DataRow | null>(null);
   const [schedulerDate, setSchedulerDate] = useState(new Date().toISOString().slice(0, 10));
+  const [appointmentDraft, setAppointmentDraft] = useState<Record<string, string | boolean> | null>(null);
 
   const loadData = useCallback(async () => {
     const response = await fetch("/api/operations");
@@ -180,6 +181,23 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadData]);
+
+  useEffect(() => {
+    if (module !== "scheduler" || !data) return;
+    const query = new URLSearchParams(window.location.search);
+    const patientId = query.get("patientId");
+    if (!patientId || !data.patients.some((patient) => value(patient, "id") === patientId)) return;
+    const startAt = query.get("startAt") || `${schedulerDate}T09:00`;
+    window.history.replaceState({}, "", window.location.pathname);
+    const timer = window.setTimeout(() => {
+      setFormMode("");
+      setForm({ ...blankForm("scheduler"), patientId, startAt });
+      setError("");
+      setNotice("Patient saved. Choose the visit details to finish booking.");
+      setModalOpen(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [data, module, schedulerDate]);
 
   function updateField(name: string, next: string | boolean) {
     setForm((current) => ({ ...current, [name]: next }));
@@ -236,12 +254,21 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     setModalOpen(true);
   }
 
-  function openAppointment(startAt = `${schedulerDate}T09:00`) {
+  function openAppointment(startAt = `${schedulerDate}T09:00`, patientId = "") {
     setFormMode("");
-    setForm({ ...blankForm("scheduler"), startAt });
+    setForm({ ...blankForm("scheduler"), startAt, patientId });
+    setAppointmentDraft(null);
     setError("");
     setNotice("");
     setModalOpen(true);
+  }
+
+  function addPatientFromAppointment() {
+    setAppointmentDraft({ ...form });
+    setFormMode("quick-patient");
+    setForm({ ...blankForm("patients"), verifyEligibility: false });
+    setError("");
+    setNotice("");
   }
 
   function rescheduleAppointment(appointment: DataRow) {
@@ -334,7 +361,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     const submittedForm = { ...form };
     const actionName =
       module === "patients" ? formMode === "eligibility-review" ? "confirmEligibilityUpdate" : formMode === "responsibility" ? "createResponsibilityProfile" : formMode === "close-responsibility" ? "closeResponsibilityProfile" : formMode === "coverage-order" ? "updateCoverageOrder" : formMode === "coverage" ? ["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) ? "createLegalResponsibility" : "createPatientCoverage" : formMode === "edit-patient" ? "updatePatient" : "createPatient"
-      : module === "scheduler" ? formMode === "reschedule" ? "rescheduleAppointment" : "createAppointment"
+      : module === "scheduler" ? formMode === "quick-patient" ? "createPatient" : formMode === "reschedule" ? "rescheduleAppointment" : "createAppointment"
       : module === "eligibility" ? "checkEligibility"
       : module === "clinical" ? "createEncounter"
       : module === "claims" ? formMode === "reconsideration" ? "createReconsideration" : "createClaim"
@@ -347,6 +374,20 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     if (!actionName) return;
     const result = await action(actionName, form);
     if (result) {
+      if (module === "scheduler" && submittedMode === "quick-patient") {
+        setFormMode("");
+        setForm({ ...(appointmentDraft || blankForm("scheduler")), patientId: String(result.id || "") });
+        setAppointmentDraft(null);
+        setNotice("Patient created and selected. Complete the appointment details.");
+        setError("");
+        setModalOpen(true);
+        return;
+      }
+      if (module === "patients" && submitIntent === "schedule" && ["", "edit-patient"].includes(submittedMode)) {
+        const patientId = String(result.id || submittedForm.id || "");
+        window.location.assign(`/scheduler?patientId=${encodeURIComponent(patientId)}`);
+        return;
+      }
       if (module === "patients" && submitIntent === "add-coverage" && ["", "edit-patient", "coverage"].includes(submittedMode)) {
         const savedPatientId = submittedMode === "coverage" ? String(submittedForm.patientId || "") : String(result.id || submittedForm.id || "");
         continueWithNextCoverage(savedPatientId, submittedForm);
@@ -759,11 +800,11 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
 
       {isModalOpen && data && (
         <div className="modal-backdrop" role="presentation">
-          <section aria-labelledby="operations-modal-title" aria-modal="true" className={`modal provider-modal ${module === "patients" ? "patient-modal" : ""}`} role="dialog">
+          <section aria-labelledby="operations-modal-title" aria-modal="true" className={`modal provider-modal ${module === "patients" || formMode === "quick-patient" ? "patient-modal" : ""}`} role="dialog">
             <div className="modal-header"><div><span className="eyebrow">{meta.eyebrow}</span><h2 id="operations-modal-title">{modalTitle(module, formMode)}</h2><p>Required fields are marked. Claim-related fields include CMS-1500 guidance.</p></div><button aria-label="Close dialog" className="close-button" onClick={() => setModalOpen(false)} type="button">×</button></div>
             <form onSubmit={submitForm}>
               {module === "patients" && (formMode === "documents" ? <PatientDocumentsForm data={data} form={form} update={updateField} /> : formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm data={data} form={form} update={updateField} />)}
-              {module === "scheduler" && <AppointmentForm data={data} form={form} update={updateField} reschedule={formMode === "reschedule"} />}
+              {module === "scheduler" && (formMode === "quick-patient" ? <PatientForm data={data} form={form} update={updateField} /> : <AppointmentForm data={data} form={form} onAddPatient={addPatientFromAppointment} update={updateField} reschedule={formMode === "reschedule"} />)}
               {module === "eligibility" && <EligibilityForm data={data} form={form} update={updateField} />}
               {module === "clinical" && <EncounterForm data={data} form={form} update={updateField} />}
               {module === "claims" && (formMode === "reconsideration" ? <ReconsiderationForm form={form} update={updateField} /> : <ClaimForm data={data} form={form} update={updateField} />)}
@@ -773,7 +814,11 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
               {module === "procedures" && <ProcedureForm form={form} update={updateField} />}
               {module === "integrations" && <IntegrationForm form={form} update={updateField} />}
               {error && <div className="notice error form-error">{error}</div>}
-              <div className="modal-footer"><button className="secondary-button" onClick={() => setModalOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{isSaving ? (formMode === "documents" ? "Uploading…" : "Saving…") : formMode === "documents" ? "Upload documents" : formMode === "reschedule" ? "Save new time" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button></div>
+              <div className="modal-footer">
+                <button className="secondary-button" onClick={() => setModalOpen(false)} type="button">Cancel</button>
+                {module === "patients" && ["", "edit-patient"].includes(formMode) && <button className="secondary-button schedule-after-save" disabled={isSaving} name="submitIntent" type="submit" value="schedule">Save & schedule</button>}
+                <button className="primary-button" disabled={isSaving} type="submit">{isSaving ? (formMode === "documents" ? "Uploading…" : "Saving…") : formMode === "quick-patient" ? "Save patient & continue booking" : formMode === "documents" ? "Upload documents" : formMode === "reschedule" ? "Save new time" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button>
+              </div>
             </form>
           </section>
         </div>
@@ -1413,15 +1458,25 @@ function PatientForm({ data, form, update }: FormProps) {
   );
 }
 
-function AppointmentForm({ data, form, update, reschedule = false }: FormProps & { reschedule?: boolean }) {
+function AppointmentForm({ data, form, update, onAddPatient, reschedule = false }: FormProps & { onAddPatient: () => void; reschedule?: boolean }) {
+  const selectedPatient = data.patients.find((patient) => value(patient, "id") === String(form.patientId || ""));
+  const selectedCoverages = selectedPatient ? data.coverages.filter((coverage) => value(coverage, "patientId") === value(selectedPatient, "id") && value(coverage, "status") === "active") : [];
+  const latestEligibility = selectedPatient ? data.eligibility.find((item) => value(item, "patientId") === value(selectedPatient, "id")) : undefined;
+  const upcomingVisits = selectedPatient ? data.appointments.filter((appointment) => value(appointment, "patientId") === value(selectedPatient, "id") && new Date(value(appointment, "startAt")) >= new Date() && !["cancelled", "no_show"].includes(value(appointment, "status"))).length : 0;
   return <div className="appointment-editor">
     <section className="responsibility-intro"><div><span className="eyebrow">{reschedule ? "Change appointment time" : "Schedule a visit"}</span><h3>{reschedule ? String(form.patientName || "Patient") : "New patient appointment"}</h3><p>{reschedule ? "The original appointment remains the same record. Saving resets it to scheduled for front-desk confirmation." : "Select the patient, visit type, provider and location. Provider conflicts are checked before saving."}</p></div></section>
     <fieldset><legend>Patient and visit</legend><div className="form-grid">
-      {reschedule ? <label className="field">Patient <span /><input disabled value={String(form.patientName || "")} /></label> : <Select label="Patient" name="patientId" form={form} update={update} required options={data.patients.map((row) => [value(row, "id"), `${value(row, "firstName")} ${value(row, "lastName")} · ${value(row, "accountNumber")}`])} />}
+      {reschedule ? <label className="field">Patient <span /><input disabled value={String(form.patientName || "")} /></label> : <div className="appointment-patient-picker"><Select label="Find existing patient" name="patientId" form={form} update={update} required options={data.patients.map((row) => [value(row, "id"), `${value(row, "firstName")} ${value(row, "lastName")} · DOB ${shortDate(value(row, "dateOfBirth"))} · ${value(row, "accountNumber")}`])} /><button className="appointment-add-patient" onClick={onAddPatient} type="button"><span>＋</span><strong>Patient not found?</strong><small>Create their chart and return to this appointment</small></button></div>}
       <Select label="Appointment type" name="appointmentType" form={form} update={update} required options={[["New patient visit", "New patient visit"], ["Office visit", "Office visit"], ["Follow-up", "Follow-up"], ["Annual wellness", "Annual wellness"], ["Procedure", "Procedure"], ["Physical therapy", "Physical therapy"], ["Telehealth", "Telehealth"], ["Consultation", "Consultation"]]} />
       <Select label="Billing context" name="billingContext" form={form} update={update} required options={[["routine", "Routine medical"], ["auto_pip", "Auto accident / PIP"], ["workers_comp", "Workers’ compensation"], ["liability", "Liability case"], ["lop_legal", "LOP / legal"], ["other", "Other"]]} />
       <Input label="Reason for visit" name="reason" form={form} update={update} placeholder="Symptoms, follow-up reason or procedure" />
     </div></fieldset>
+    {selectedPatient && !reschedule && <section className="appointment-readiness">
+      <div><span>Selected patient</span><strong>{value(selectedPatient, "firstName")} {value(selectedPatient, "lastName")}</strong><small>{value(selectedPatient, "accountNumber")} · {value(selectedPatient, "phone") || "Phone missing"}</small></div>
+      <div><span>Coverage</span><strong>{selectedCoverages.length ? `${selectedCoverages.length} active` : "Needs insurance"}</strong><small>Primary, secondary and DOS order remain on the patient chart</small></div>
+      <div><span>Eligibility</span><Status value={value(latestEligibility || {}, "status") || "not checked"} /><small>Verify for the appointment DOS after booking</small></div>
+      <div><span>Upcoming visits</span><strong>{upcomingVisits}</strong><small>Helps prevent duplicate bookings</small></div>
+    </section>}
     <fieldset><legend>Time and resources</legend><div className="form-grid">
       <Select label="Provider" name="providerId" form={form} update={update} required options={data.providers.map((row) => [value(row, "id"), `${value(row, "firstName")} ${value(row, "lastName")} · ${value(row, "specialty")}`])} />
       <Select label="Facility" name="facilityId" form={form} update={update} required hint="facilityAssignment" options={data.facilities.map((row) => [value(row, "id"), value(row, "name")])} />
@@ -1556,6 +1611,7 @@ function IntegrationForm({ form, update }: SimpleFormProps) {
 }
 
 function modalTitle(module: OperationsModule, mode: string) {
+  if (module === "scheduler" && mode === "quick-patient") return "Register patient & continue booking";
   if (module === "scheduler" && mode === "reschedule") return "Reschedule appointment";
   if (module === "patients" && mode === "documents") return "Patient documents";
   if (module === "patients" && mode === "eligibility-review") return "Review eligibility updates";

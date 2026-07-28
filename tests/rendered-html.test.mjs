@@ -75,9 +75,14 @@ test("provides a full scheduler command center and guarded appointment actions",
   assert.match(workspace, /No show/);
   assert.match(workspace, /In room/);
   assert.match(workspace, /Conflict protection/);
+  assert.match(workspace, /Patient not found\?/);
+  assert.match(workspace, /Save patient & continue booking/);
+  assert.match(workspace, /Save & schedule/);
+  assert.match(workspace, /appointment-readiness/);
   assert.match(operationsApi, /rescheduleAppointment/);
   assert.match(operationsApi, /already has an appointment during the selected time/);
   assert.match(operationsApi, /allowedStatuses/);
+  assert.match(operationsApi, /Possible duplicate patient/);
 });
 
 test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local authentication", async () => {

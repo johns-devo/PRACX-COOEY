@@ -2661,6 +2661,93 @@ form .patient-tab-panel {
   padding: 4px 0;
 }
 
+.appointment-patient-picker {
+  display: grid;
+  grid-column: span 2;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 12px;
+  align-items: end;
+}
+
+.appointment-add-patient {
+  min-height: 62px;
+  padding: 9px 12px;
+  border: 1px dashed #8fc7b2;
+  border-radius: 10px;
+  background: #f1faf6;
+  color: #215e48;
+  text-align: left;
+}
+
+.appointment-add-patient span {
+  float: left;
+  margin: 2px 9px 12px 0;
+  font-size: 19px;
+}
+
+.appointment-add-patient strong,
+.appointment-add-patient small {
+  display: block;
+}
+
+.appointment-add-patient small {
+  margin-top: 3px;
+  color: #6c7d76;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.appointment-readiness {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 26px 18px;
+  overflow: hidden;
+  border: 1px solid #dce9e4;
+  border-radius: 11px;
+  background: #dce9e4;
+}
+
+.appointment-readiness > div {
+  min-height: 86px;
+  padding: 12px;
+  background: #f8fbfa;
+}
+
+.appointment-readiness span,
+.appointment-readiness strong,
+.appointment-readiness small {
+  display: block;
+}
+
+.appointment-readiness > div > span {
+  margin-bottom: 5px;
+  color: #73837d;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.appointment-readiness strong {
+  color: #273a33;
+  font-size: 13px;
+}
+
+.appointment-readiness small {
+  margin-top: 5px;
+  color: #71817b;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+@media (max-width: 760px) {
+  .appointment-patient-picker,
+  .appointment-readiness {
+    grid-template-columns: 1fr;
+  }
+}
+
 .scrubber-panel {
   margin-bottom: 15px;
   padding: 18px 20px;

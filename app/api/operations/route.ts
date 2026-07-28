@@ -1109,6 +1109,24 @@ export async function POST(request: Request) {
       if (planId && memberId && !subscriberSameAsPatient && manualSubscriberFields.some((field) => !clean(payload[field]))) {
         return Response.json({ error: "Enter the different subscriber’s name, birth date and address." }, { status: 400 });
       }
+      const duplicatePatient = await db.select({
+        id: patients.id,
+        accountNumber: patients.accountNumber,
+        firstName: patients.firstName,
+        lastName: patients.lastName,
+      }).from(patients).where(and(
+        eq(patients.organizationId, DEFAULT_ORGANIZATION_ID),
+        eq(patients.dateOfBirth, dateOfBirth),
+        sql`lower(${patients.firstName}) = lower(${firstName})`,
+        sql`lower(${patients.lastName}) = lower(${lastName})`,
+      )).limit(1);
+      if (duplicatePatient.length) {
+        const match = duplicatePatient[0];
+        return Response.json({
+          error: `Possible duplicate patient: ${match.firstName} ${match.lastName} (${match.accountNumber}). Select the existing chart instead of creating another.`,
+          duplicatePatientId: match.id,
+        }, { status: 409 });
+      }
       const patientId = crypto.randomUUID();
       const accountNumber = `PX${Date.now().toString().slice(-6)}`;
       await db.insert(patients).values({
