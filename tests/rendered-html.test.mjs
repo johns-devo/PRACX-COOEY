@@ -108,6 +108,8 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(workspace, /claimFieldHints\.placeOfService/);
   assert.match(claimHint, /CMS-1500/);
   assert.match(claimHint, /if \(!hint\) return null/);
+  assert.match(claimHint, /data-tooltip/);
+  assert.match(claimHint, />\s*\?\s*</);
   assert.match(cms1500, /formVersion: "02\/12"/);
   assert.match(cms1500, /instructionVersion: "13\.0 7\/25"/);
   assert.match(cms1500, /24J \/ 33a/);

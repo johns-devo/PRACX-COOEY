@@ -84,7 +84,7 @@ button {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.1);
   color: #c8f0df;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -105,13 +105,13 @@ button {
 .sidebar-footer small {
   margin-top: 2px;
   color: rgba(235, 247, 241, 0.62);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .nav-label {
   margin: 15px 10px 8px;
   color: rgba(235, 247, 241, 0.46);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -132,7 +132,7 @@ button {
   background: transparent;
   color: rgba(243, 250, 247, 0.76);
   text-align: left;
-  font-size: 13px;
+  font-size: 15px;
   text-decoration: none;
 }
 
@@ -197,12 +197,12 @@ button {
   border-radius: 50%;
   background: #d6f2e7;
   color: var(--forest);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .sidebar-footer strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .main {
@@ -223,7 +223,7 @@ button {
 .eyebrow,
 .micro-label {
   color: #72807a;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -261,7 +261,7 @@ button {
   border: 1px solid var(--forest);
   background: var(--forest);
   color: #fff;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -283,7 +283,7 @@ button {
   border: 1px solid var(--line);
   background: #fff;
   color: #33423d;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 650;
   text-decoration: none;
 }
@@ -320,7 +320,7 @@ button {
   border-bottom: 2px solid transparent;
   background: transparent;
   color: #7b8581;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 650;
   text-decoration: none;
 }
@@ -369,7 +369,7 @@ button {
 .org-meta {
   flex-wrap: wrap;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .status-pill {
@@ -378,7 +378,7 @@ button {
   gap: 5px;
   padding: 4px 8px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: capitalize;
 }
@@ -412,7 +412,7 @@ button {
 .stats-grid small {
   display: block;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .stats-grid strong {
@@ -454,7 +454,7 @@ button {
 .table-header p {
   margin: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .search-field {
@@ -474,7 +474,7 @@ button {
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .filters select,
@@ -490,7 +490,7 @@ button {
 .filters select {
   height: 38px;
   padding: 0 27px 0 10px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .filters select:focus,
@@ -523,7 +523,7 @@ td {
 th {
   background: #f9faf8;
   color: #74807b;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -531,7 +531,7 @@ th {
 
 td {
   color: #47534f;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 tbody tr:hover {
@@ -550,7 +550,7 @@ tbody tr:hover {
   border-radius: 8px;
   background: #edf4f0;
   color: #3c6c5c;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -564,14 +564,14 @@ tbody tr:hover {
 .facility-name strong,
 .location-name {
   color: #25312d;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .facility-name small,
 .address {
   margin-top: 3px;
   color: #84908b;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .pos-badge {
@@ -588,7 +588,7 @@ tbody tr:hover {
 
 .mono {
   font-family: var(--font-geist-mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .row-action,
@@ -633,7 +633,7 @@ tbody tr:hover {
   max-width: 410px;
   margin: 0 0 18px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.6;
 }
 
@@ -642,7 +642,7 @@ tbody tr:hover {
   padding: 11px 13px;
   border: 1px solid;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .notice.success {
@@ -698,7 +698,7 @@ tbody tr:hover {
 .modal-header p {
   margin: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .close-button {
@@ -716,7 +716,7 @@ form fieldset {
 form legend {
   padding: 0;
   color: #35423e;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -784,7 +784,7 @@ form legend {
 .patient-editor-summary > p {
   margin: 0;
   color: #6e7d77;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -813,7 +813,7 @@ form legend {
   border-radius: 8px;
   background: #e8f1ed;
   color: #687872;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -829,13 +829,13 @@ form legend {
 
 .patient-editor-progress strong {
   color: #3c4e47;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .patient-editor-progress small {
   margin-top: 2px;
   color: #87938e;
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .patient-editor-security {
@@ -852,13 +852,13 @@ form legend {
 }
 
 .patient-editor-security strong {
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .patient-editor-security span {
   margin-top: 4px;
   color: rgba(231, 245, 239, 0.7);
-  font-size: 7px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -886,19 +886,19 @@ form legend {
   border-bottom: 2px solid transparent;
   background: transparent;
   color: #718079;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .patient-form-tabs button > span {
   color: #9aa5a0;
   font-family: var(--font-geist-mono);
-  font-size: 7px;
+  font-size: 11px;
 }
 
 .patient-form-tabs button > b {
   color: #2c8565;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .patient-form-tabs button:hover,
@@ -925,7 +925,7 @@ form .patient-tab-panel {
 .patient-section-copy {
   margin: 7px 0 23px;
   color: #7b8883;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .patient-name-grid,
@@ -991,7 +991,7 @@ form .patient-tab-panel {
 .address-tools p {
   margin: 0;
   color: #81908a;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .address-verify-button {
@@ -1001,7 +1001,7 @@ form .patient-tab-panel {
   border-radius: 8px;
   background: #eff9f5;
   color: #1f6a50;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -1021,7 +1021,7 @@ form .patient-tab-panel {
   border-radius: 8px;
   background: #f4fbf8;
   color: #3d6657;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .address-verification-card strong {
@@ -1064,7 +1064,7 @@ form .patient-tab-panel {
   display: block;
   margin-bottom: 5px;
   color: #71807a;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1075,7 +1075,7 @@ form .patient-tab-panel {
   display: block;
   margin: 0;
   color: #31433c;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1086,7 +1086,7 @@ form .patient-tab-panel {
   border-radius: 6px;
   background: #247b5b;
   color: #fff;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -1141,7 +1141,7 @@ form .patient-tab-panel {
 .eligibility-option p {
   margin: 0;
   color: #60726b;
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1162,7 +1162,7 @@ form .patient-tab-panel {
   border-radius: 7px;
   background: #fff;
   color: #496158;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 750;
 }
 
@@ -1179,7 +1179,7 @@ form .patient-tab-panel {
 
 .patient-tab-navigation > span {
   color: #8a9691;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .patient-tab-navigation .ready-label {
@@ -1220,7 +1220,7 @@ form .patient-tab-panel {
   max-width: 620px;
   margin: 0;
   color: #77857f;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -1231,7 +1231,7 @@ form .patient-tab-panel {
   border-radius: 999px;
   background: #f0f9f5;
   color: #27684f;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -1254,7 +1254,7 @@ form .patient-tab-panel {
 .responsibility-existing span,
 .responsibility-existing small {
   color: #84918c;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .responsibility-existing span {
@@ -1265,7 +1265,7 @@ form .patient-tab-panel {
 
 .responsibility-existing strong {
   color: #34473f;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .responsibility-editor fieldset {
@@ -1294,7 +1294,7 @@ form .patient-tab-panel {
   border-radius: 8px;
   background: #fff9eb;
   color: #786337;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .responsibility-rule-note strong {
@@ -1308,16 +1308,18 @@ form .patient-tab-panel {
   border-radius: 999px;
   background: #edf7f3;
   color: #25684f;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
   text-transform: capitalize;
 }
 
 .field {
   display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
   gap: 6px;
   color: #65716c;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -1336,17 +1338,19 @@ form .patient-tab-panel {
   position: relative;
   display: inline-flex;
   align-items: center;
-  width: fit-content;
-  min-height: 18px;
-  padding: 2px 6px;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
   border: 1px solid #b9d8cc;
-  border-radius: 999px;
+  border-radius: 50%;
   background: #edf8f3;
   color: #266650;
-  font-size: 8px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 800;
-  letter-spacing: 0.02em;
   line-height: 1;
   text-transform: none;
 }
@@ -1377,16 +1381,16 @@ form .patient-tab-panel {
 .claim-field-hint::after {
   position: absolute;
   z-index: 40;
-  bottom: calc(100% + 7px);
+  top: calc(100% + 8px);
   left: 0;
-  width: 250px;
-  padding: 9px 10px;
-  border-radius: 7px;
+  width: min(290px, calc(100vw - 48px));
+  padding: 11px 12px;
+  border-radius: 9px;
   background: #172c25;
   box-shadow: 0 8px 22px rgba(20, 43, 35, 0.18);
   color: #fff;
   content: attr(data-tooltip);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
   line-height: 1.45;
@@ -1411,10 +1415,11 @@ form .patient-tab-panel {
 
 .field input,
 .field select {
+  grid-column: 1 / -1;
   width: 100%;
   height: 40px;
   padding: 0 11px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .span-2 {
@@ -1460,7 +1465,7 @@ form .patient-tab-panel {
   border-radius: 9px;
   background: #fbfcfb;
   color: #42504b;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .check-card input {
@@ -1476,14 +1481,14 @@ form .patient-tab-panel {
 .check-card small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.35;
 }
 
 .form-guidance {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -1535,7 +1540,7 @@ form .patient-tab-panel {
   max-width: 650px;
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -1548,13 +1553,13 @@ form .patient-tab-panel {
 
 .onboarding-actions > span {
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .onboarding-actions > strong {
   margin-bottom: 5px;
   color: #256a53;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .analytics-topbar {
@@ -1572,7 +1577,7 @@ form .patient-tab-panel {
 .operations-topbar p {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .operations-content {
@@ -1594,7 +1599,7 @@ form .patient-tab-panel {
   min-height: 360px;
   place-items: center;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .status-pill.danger {
@@ -1610,7 +1615,7 @@ form .patient-tab-panel {
   border-radius: 7px;
   background: #f6faf8;
   color: #285f4c;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1637,7 +1642,7 @@ form .patient-tab-panel {
   background: #f2f8f5;
   color: #2e6854;
   font-family: var(--font-geist-mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1661,7 +1666,7 @@ form .patient-tab-panel {
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .date-strip span.selected {
@@ -1693,14 +1698,14 @@ form .patient-tab-panel {
 
 .scrubber-panel article strong {
   color: #283731;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .scrubber-panel article p,
 .scrubber-panel > p {
   margin: 3px 0 0;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1717,7 +1722,7 @@ form .patient-tab-panel {
   border-radius: 8px;
   background: #fff;
   color: #52635c;
-  font-size: 9px;
+  font-size: 11px;
   text-align: center;
 }
 
@@ -1746,13 +1751,13 @@ form .patient-tab-panel {
 
 .integration-warning strong {
   color: #76551b;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .integration-warning p {
   margin: 0;
   color: #7b6a4c;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .integration-grid {
@@ -1785,7 +1790,7 @@ form .patient-tab-panel {
 .integration-grid p {
   margin: 0;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .integration-icon {
@@ -1796,7 +1801,7 @@ form .patient-tab-panel {
   border-radius: 10px;
   background: var(--mint);
   color: var(--forest);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 850;
 }
 
@@ -1810,7 +1815,7 @@ form .patient-tab-panel {
   border-radius: 999px;
   background: #fff8ea;
   color: #89601e;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1839,7 +1844,7 @@ form .patient-tab-panel {
 .panel-heading p {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .dashboard-filters {
@@ -1856,7 +1861,7 @@ form .patient-tab-panel {
   border-radius: 8px;
   background: #fff;
   color: #405049;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .month-button {
@@ -1898,7 +1903,7 @@ form .patient-tab-panel {
 
 .analytics-cards span {
   color: #718079;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 650;
 }
 
@@ -1914,7 +1919,7 @@ form .patient-tab-panel {
 .analytics-cards small {
   position: relative;
   z-index: 1;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .analytics-cards small.positive {
@@ -1949,14 +1954,14 @@ form .patient-tab-panel {
 
 .panel-heading h3 {
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .chart-legend {
   display: flex;
   gap: 12px;
   color: #718079;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .chart-legend span::before {
@@ -2018,7 +2023,7 @@ form .patient-tab-panel {
 
 .month-group small {
   color: #7e8984;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .aging-list {
@@ -2042,11 +2047,11 @@ form .patient-tab-panel {
 .aging-row span,
 .aging-row small {
   color: #718079;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .aging-row strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .aging-track {
@@ -2077,7 +2082,7 @@ form .patient-tab-panel {
 
 .queue-panel td strong {
   color: #293832;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .queue-priority {
@@ -2085,7 +2090,7 @@ form .patient-tab-panel {
   border-radius: 999px;
   background: #fff5e2;
   color: #8a611e;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -2107,7 +2112,7 @@ form .patient-tab-panel {
 
 .quick-reports > div span {
   color: #a9d4c3;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2123,7 +2128,7 @@ form .patient-tab-panel {
 .quick-reports p {
   margin: 0;
   color: rgba(255, 255, 255, 0.65);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .quick-reports button,
@@ -2137,7 +2142,7 @@ form .patient-tab-panel {
   border-left: 1px solid var(--soft-line);
   background: #fff;
   color: #3b4a44;
-  font-size: 9px;
+  font-size: 11px;
   text-align: left;
   text-decoration: none;
 }
@@ -2211,7 +2216,7 @@ form .patient-tab-panel {
 }
 
 .login-card-wordmark strong {
-  font-size: 13px;
+  font-size: 15px;
   letter-spacing: 0.12em;
 }
 
@@ -2219,12 +2224,12 @@ form .patient-tab-panel {
   margin-top: 2px;
   color: #708078;
   font-family: Georgia, serif;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .login-kicker {
   color: #377460;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -2242,7 +2247,7 @@ form .patient-tab-panel {
 .login-intro {
   margin: 0 0 27px;
   color: #68756f;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.6;
 }
 
@@ -2255,7 +2260,7 @@ form .patient-tab-panel {
   display: grid;
   gap: 7px;
   color: #405049;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -2270,7 +2275,7 @@ form .patient-tab-panel {
   background: #fcfdfc;
   color: var(--ink);
   outline: 0;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -2296,7 +2301,7 @@ form .patient-tab-panel {
   border: 0;
   background: transparent;
   color: #34705c;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 750;
   transform: translateY(-50%);
 }
@@ -2314,7 +2319,7 @@ form .patient-tab-panel {
   align-items: center;
   gap: 7px;
   color: #66736d;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .checkbox-label input {
@@ -2326,7 +2331,7 @@ form .patient-tab-panel {
   border: 0;
   background: transparent;
   color: #286b54;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -2337,7 +2342,7 @@ form .patient-tab-panel {
   border-radius: 9px;
   background: var(--forest);
   color: #fff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 750;
 }
 
@@ -2357,7 +2362,7 @@ form .patient-tab-panel {
   border-radius: 8px;
   background: #fff4f4;
   color: #9e3f3f;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .development-access {
@@ -2370,14 +2375,14 @@ form .patient-tab-panel {
   background: #f4faf7;
   color: #4d5f57;
   font-family: var(--font-geist-mono);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .development-access > span {
   margin-bottom: 2px;
   color: #2b6551;
   font-family: var(--font-geist-sans);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2396,7 +2401,7 @@ form .patient-tab-panel {
 .login-security {
   margin: 18px 0 0;
   color: #89948f;
-  font-size: 8px;
+  font-size: 11px;
   text-align: center;
 }
 
