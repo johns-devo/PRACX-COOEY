@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local authentication", async () => {
-  const [workspace, providerWorkspace, operationsWorkspace, operationsApi, claimHint, cms1500, providerApi, referringApi, dashboard, login, auth, onboarding, layout, schema, migration, providerMigration, operationsMigration, responsibilityMigration, cmsQualifierMigration, box19Migration, responsibilityStatusMigration, currentClaimMigration, claimConfigWorkspace, claimConfigApi, claimConfigDefaults, claimConfigPage, claimConfigMigration] = await Promise.all([
+  const [workspace, providerWorkspace, operationsWorkspace, operationsApi, claimHint, cms1500, providerApi, referringApi, dashboard, login, auth, onboarding, layout, schema, migration, providerMigration, operationsMigration, responsibilityMigration, cmsQualifierMigration, box19Migration, responsibilityStatusMigration, currentClaimMigration, claimConfigWorkspace, claimConfigApi, claimConfigDefaults, claimConfigPage, claimConfigMigration, eligibilityUpdateMigration] = await Promise.all([
     readFile(new URL("../app/FacilityWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/ProviderWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/OperationsWorkspace.tsx", import.meta.url), "utf8"),
@@ -55,6 +55,7 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
     readFile(new URL("../lib/claim-configuration.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/setup/claim-configuration/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0010_tricky_malcolm_colcord.sql", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0011_milky_centennial.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(layout, /PRACX Care Operations/);
@@ -89,6 +90,8 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(schema, /referringProviders/);
   assert.match(schema, /patientCoverages/);
   assert.match(schema, /eligibilityChecks/);
+  assert.match(schema, /eligibilityUpdateHistory/);
+  assert.match(schema, /responseDetails/);
   assert.match(schema, /ledgerTransactions/);
   assert.match(schema, /reconsiderations/);
   assert.match(schema, /integrations/);
@@ -145,7 +148,7 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(operationsWorkspace, /Use standardized address/);
   assert.match(operationsWorkspace, /formatPhone/);
   assert.match(operationsWorkspace, /USPS address verification/);
-  assert.match(operationsWorkspace, /Billing responsibility timeline/);
+  assert.doesNotMatch(operationsWorkspace, /Billing responsibility timeline/);
   assert.match(operationsWorkspace, /Add DOS responsibility profile/);
   assert.match(operationsWorkspace, /Add patient coverage/);
   assert.match(operationsWorkspace, /Additional coverage/);
@@ -187,6 +190,11 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(operationsWorkspace, /Open Edit to view demographics, contact and insurance details/);
   assert.match(operationsWorkspace, /coverage-order/);
   assert.match(operationsWorkspace, /Save & add another insurance/);
+  assert.match(operationsWorkspace, /Subscriber is the same as the patient/);
+  assert.match(operationsWorkspace, /Check this policy’s eligibility/);
+  assert.match(operationsWorkspace, /Review eligibility updates/);
+  assert.match(operationsWorkspace, /Confirm & apply selected updates/);
+  assert.match(operationsWorkspace, /SelectedPatientInsurance/);
   assert.match(operationsWorkspace, /continueWithNextCoverage/);
   assert.match(operationsWorkspace, /submitIntent/);
   assert.doesNotMatch(operationsWorkspace, /Reported order|Reported primary|Reported secondary|Reported tertiary/);
@@ -194,6 +202,9 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(operationsApi, /claim837/);
   assert.match(operationsApi, /checkEligibility/);
   assert.match(operationsApi, /performEligibilityCheck/);
+  assert.match(operationsApi, /confirmEligibilityUpdate/);
+  assert.match(operationsApi, /eligibilityUpdateHistory/);
+  assert.match(operationsApi, /responseDetails/);
   assert.match(operationsApi, /updatePatient/);
   assert.match(operationsApi, /lookupZip/);
   assert.match(operationsApi, /verifyAddress/);
@@ -236,6 +247,8 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(claimConfigPage, /user\.role\.toLowerCase\(\) !== "administrator"/);
   assert.match(claimConfigMigration, /CREATE TABLE `claim_configuration_values`/);
   assert.match(claimConfigMigration, /CREATE TABLE `claim_configuration_history`/);
+  assert.match(eligibilityUpdateMigration, /CREATE TABLE `eligibility_update_history`/);
+  assert.match(eligibilityUpdateMigration, /ADD `response_details` text/);
   assert.match(operationsWorkspace, /Claim configuration/);
   assert.match(operationsWorkspace, /claimConfigurationValues/);
   assert.match(operationsApi, /exact ZIP\+4/);

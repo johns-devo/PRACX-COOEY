@@ -1102,6 +1102,215 @@ form .patient-tab-panel {
   margin-top: 22px;
 }
 
+.subscriber-same-control {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 14px;
+  padding: 13px 14px;
+  border: 1px solid #b9dcca;
+  border-radius: 10px;
+  background: #f1faf6;
+}
+
+.subscriber-same-control input {
+  width: 18px;
+  height: 18px;
+  accent-color: #176b52;
+}
+
+.subscriber-same-control span,
+.subscriber-auto-summary {
+  display: grid;
+  gap: 3px;
+}
+
+.subscriber-same-control small,
+.subscriber-auto-summary span {
+  color: #65766f;
+  font-size: 12px;
+}
+
+.subscriber-auto-summary {
+  padding: 14px 16px;
+  border: 1px dashed #bdd5cc;
+  border-radius: 9px;
+  background: #fbfdfc;
+}
+
+.patient-select-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.selected-patient-row {
+  background: #eef8f4;
+}
+
+.selected-insurance-panel {
+  margin-top: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgba(21, 47, 39, 0.025);
+}
+
+.selected-insurance-panel.empty {
+  display: grid;
+  gap: 5px;
+  color: #6b7b75;
+}
+
+.selected-insurance-panel > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+
+.selected-insurance-panel h2,
+.selected-insurance-panel h3,
+.selected-insurance-panel p {
+  margin: 0;
+}
+
+.selected-insurance-panel header p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.coverage-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.coverage-detail-grid article {
+  padding: 16px;
+  border: 1px solid #dce7e3;
+  border-radius: 11px;
+  background: #fbfdfc;
+}
+
+.coverage-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #257055;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.coverage-detail-grid h3 {
+  margin-bottom: 14px;
+  font-size: 15px;
+}
+
+.coverage-detail-grid dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.coverage-detail-grid dt {
+  color: #7b8984;
+  font-size: 11px;
+}
+
+.coverage-detail-grid dd {
+  margin: 2px 0 0;
+  color: #2c3d37;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.coverage-detail-grid article > small,
+.eligibility-audit span {
+  color: #74837e;
+  font-size: 11px;
+}
+
+.coverage-check-button {
+  align-self: flex-start;
+  background: var(--green-soft);
+  border: 1px solid var(--green-border);
+  border-radius: 10px;
+  color: var(--green);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  margin-top: 16px;
+  padding: 10px 14px;
+}
+
+.eligibility-audit {
+  display: grid;
+  gap: 5px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--soft-line);
+}
+
+.eligibility-benefit-summary {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 9px;
+}
+
+.eligibility-benefit-summary span {
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+  border: 1px solid #dfe8e4;
+  border-radius: 9px;
+  color: #71807a;
+  font-size: 11px;
+}
+
+.eligibility-benefit-summary strong {
+  color: #263a33;
+  font-size: 13px;
+}
+
+.address-choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.address-choice-grid label {
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #dbe5e1;
+  border-radius: 10px;
+}
+
+.address-choice-grid label.selected {
+  border-color: #7fbea5;
+  background: #eff9f5;
+}
+
+.address-choice-grid label span {
+  display: grid;
+  gap: 5px;
+}
+
+.address-choice-grid small {
+  color: #697a74;
+  line-height: 1.45;
+}
+
 .insurance-save-actions {
   display: flex;
   align-items: center;
@@ -2717,6 +2926,12 @@ form .patient-tab-panel {
 
   .patient-policy-options,
   .eligibility-option {
+    grid-template-columns: 1fr;
+  }
+
+  .coverage-detail-grid,
+  .eligibility-benefit-summary,
+  .address-choice-grid {
     grid-template-columns: 1fr;
   }
 

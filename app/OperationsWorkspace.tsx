@@ -46,6 +46,7 @@ type WorkspaceData = {
   responsibilityHistory: DataRow[];
   claimResponsibilitySnapshots: DataRow[];
   claimConfigurationValues: DataRow[];
+  eligibilityUpdateHistory: DataRow[];
   error?: string;
 };
 
@@ -115,7 +116,7 @@ function formatPhone(input: string) {
 
 function blankForm(module: OperationsModule): Record<string, string | boolean> {
   const today = new Date().toISOString().slice(0, 10);
-  if (module === "patients") return { sex: "unknown", relationship: "self", priority: "primary", acceptAssignment: true, releaseOfInformation: true, assignmentOfBenefits: true, verifyEligibility: true };
+  if (module === "patients") return { sex: "unknown", relationship: "self", priority: "primary", subscriberSameAsPatient: true, acceptAssignment: true, releaseOfInformation: true, assignmentOfBenefits: true, verifyEligibility: true };
   if (module === "scheduler") return { duration: "30", appointmentType: "Office visit", billingContext: "routine", startAt: `${today}T09:00` };
   if (module === "eligibility") return { dateOfService: today };
   if (module === "clinical") return { dateOfService: today, billingContext: "routine", readyToBill: true };
@@ -154,6 +155,8 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [claimIssues, setClaimIssues] = useState<Record<string, DataRow[]>>({});
+  const [selectedPatientId, setSelectedPatientId] = useState("");
+  const [eligibilityReview, setEligibilityReview] = useState<DataRow | null>(null);
 
   const loadData = useCallback(async () => {
     const response = await fetch("/api/operations");
@@ -202,6 +205,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
       subscriberLastName: lastName,
       subscriberDateOfBirth: dateOfBirth,
       subscriberSex: sex,
+      subscriberSameAsPatient: true,
       effectiveDate: "",
       terminationDate: "",
       verifyEligibility: true,
@@ -247,7 +251,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     const submittedMode = formMode;
     const submittedForm = { ...form };
     const actionName =
-      module === "patients" ? formMode === "responsibility" ? "createResponsibilityProfile" : formMode === "close-responsibility" ? "closeResponsibilityProfile" : formMode === "coverage-order" ? "updateCoverageOrder" : formMode === "coverage" ? "createPatientCoverage" : formMode === "edit-patient" ? "updatePatient" : "createPatient"
+      module === "patients" ? formMode === "eligibility-review" ? "confirmEligibilityUpdate" : formMode === "responsibility" ? "createResponsibilityProfile" : formMode === "close-responsibility" ? "closeResponsibilityProfile" : formMode === "coverage-order" ? "updateCoverageOrder" : formMode === "coverage" ? "createPatientCoverage" : formMode === "edit-patient" ? "updatePatient" : "createPatient"
       : module === "scheduler" ? "createAppointment"
       : module === "eligibility" ? "checkEligibility"
       : module === "clinical" ? "createEncounter"
@@ -269,6 +273,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
       setModalOpen(false);
       setNotice(
         module === "patients" ? formMode === "responsibility" ? "DOS responsibility profile saved with an audit record."
+          : formMode === "eligibility-review" ? "Eligibility details reviewed and applied with an audit log."
           : formMode === "close-responsibility" ? "Responsibility period closed without changing historical claims."
           : formMode === "coverage-order" ? "Default primary, secondary and tertiary insurance order updated. Existing DOS profiles and claims were not changed."
           : formMode === "coverage" ? "Additional patient coverage saved."
@@ -295,17 +300,24 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     }
   }
 
-  async function verifyPatientEligibility(patientId: string) {
+  async function verifyPatientEligibility(patientId: string, coverageId?: string) {
     const result = await action("checkEligibility", {
       patientId,
+      coverageId: coverageId || "",
       dateOfService: new Date().toISOString().slice(0, 10),
     });
     if (!result) return;
     const details = (result.details || {}) as DataRow;
-    setNotice(
-      `${value(details, "payerName")} ${value(details, "planName")} verified as ${String(result.status)}. `
-      + `Copay ${currency(value(details, "copayAmount"))}; reference ${String(result.referenceNumber)}.`,
-    );
+    setSelectedPatientId(patientId);
+    setEligibilityReview({ ...result, details });
+    setFormMode("eligibility-review");
+    setForm({
+      eligibilityCheckId: String(result.id || ""),
+      patientId,
+      addressChoice: "keep_current",
+      reason: `Eligibility review ${String(result.referenceNumber || "")}`.trim(),
+    });
+    setModalOpen(true);
   }
 
   function editPatient(patient: DataRow, coverage?: DataRow) {
@@ -342,28 +354,17 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
       subscriberCity: value(coverage || {}, "subscriberCity"),
       subscriberState: value(coverage || {}, "subscriberState"),
       subscriberPostalCode: value(coverage || {}, "subscriberPostalCode"),
+      subscriberSameAsPatient: !coverage || (
+        value(coverage, "relationship") === "self"
+        && value(coverage, "subscriberFirstName") === value(patient, "firstName")
+        && value(coverage, "subscriberLastName") === value(patient, "lastName")
+      ),
       effectiveDate: value(coverage || {}, "effectiveDate"),
       terminationDate: value(coverage || {}, "terminationDate"),
       acceptAssignment: value(coverage || {}, "acceptAssignment") !== "no",
       releaseOfInformation: value(coverage || {}, "releaseOfInformation") !== "no",
       assignmentOfBenefits: value(coverage || {}, "assignmentOfBenefits") !== "no",
       verifyEligibility: true,
-    });
-    setError("");
-    setNotice("");
-    setModalOpen(true);
-  }
-
-  function openCloseResponsibility(profile: DataRow) {
-    const patient = data?.patients.find((item) => value(item, "id") === value(profile, "patientId"));
-    setFormMode("close-responsibility");
-    setForm({
-      id: value(profile, "id"),
-      patientName: `${value(patient || {}, "firstName")} ${value(patient || {}, "lastName")}`,
-      profileName: value(profile, "profileName"),
-      effectiveFrom: value(profile, "effectiveFrom"),
-      effectiveTo: new Date().toISOString().slice(0, 10),
-      reason: "",
     });
     setError("");
     setNotice("");
@@ -525,20 +526,10 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
                     const orderRank: Record<string, number> = { primary: 1, secondary: 2, tertiary: 3, unassigned: 4 };
                     const coverage = patientCoverages.sort((left, right) => (orderRank[value(left, "priority")] || 4) - (orderRank[value(right, "priority")] || 4))[0];
                     const latestEligibility = data.eligibility.find((item) => value(item, "patientId") === value(patient, "id"));
-                    return <tr key={value(patient, "id")}><td><PersonCell row={patient} /></td><td className="mono">{value(patient, "accountNumber")}</td><td>{shortDate(value(patient, "dateOfBirth"))}</td><td><Status value={value(latestEligibility || {}, "status") || "not checked"} /></td><td><Status value={value(patient, "status")} /></td><td><div className="row-actions"><button onClick={() => editPatient(patient, coverage)} type="button">Edit</button><button disabled={!coverage || isSaving} onClick={() => verifyPatientEligibility(value(patient, "id"))} type="button">Check eligibility</button></div></td></tr>;
+                    return <tr className={selectedPatientId === value(patient, "id") ? "selected-patient-row" : ""} key={value(patient, "id")}><td><button className="patient-select-button" onClick={() => setSelectedPatientId(value(patient, "id"))} type="button"><PersonCell row={patient} /></button></td><td className="mono">{value(patient, "accountNumber")}</td><td>{shortDate(value(patient, "dateOfBirth"))}</td><td><Status value={value(latestEligibility || {}, "status") || "not checked"} /></td><td><Status value={value(patient, "status")} /></td><td><div className="row-actions"><button onClick={() => editPatient(patient, coverage)} type="button">Edit</button><button disabled={!coverage || isSaving} onClick={() => verifyPatientEligibility(value(patient, "id"))} type="button">Check eligibility</button></div></td></tr>;
                   })}</tbody></table>
               </TablePanel>
-              <TablePanel title="Billing responsibility timeline" description="Primary, secondary, tertiary and guarantor assignments by DOS range and billing context.">
-                <table><thead><tr><th>Patient / profile</th><th>DOS range</th><th>Context</th><th>Primary</th><th>Secondary</th><th>Tertiary / final balance</th><th>Guarantor</th><th>Verification</th><th>Billing hold</th><th>Actions</th></tr></thead>
-                  <tbody>{data.responsibilityProfiles.map((profile) => {
-                    const patient = data.patients.find((item) => value(item, "id") === value(profile, "patientId"));
-                    const sources = data.responsibilitySources.filter((source) => value(source, "profileId") === value(profile, "id"));
-                    const sourceFor = (role: string) => value(sources.find((source) => value(source, "role") === role) || {}, "sourceName") || "—";
-                    const tertiary = sourceFor("tertiary");
-                    const finalBalance = sourceFor("final_balance");
-                    return <tr key={value(profile, "id")}><td><strong className="location-name">{value(patient || {}, "firstName")} {value(patient || {}, "lastName")}</strong><small className="address">{value(profile, "profileName")} · {value(profile, "status")}</small></td><td><strong className="location-name">{shortDate(value(profile, "effectiveFrom"))}</strong><small className="address">Through {value(profile, "effectiveTo") ? shortDate(value(profile, "effectiveTo")) : "Open"}</small></td><td><span className="context-chip">{value(profile, "billingContext").replaceAll("_", " ")}</span></td><td>{sourceFor("primary")}</td><td>{sourceFor("secondary")}</td><td><strong className="location-name">{tertiary}</strong>{finalBalance !== "—" && <small className="address">Balance → {finalBalance}</small>}</td><td><strong className="location-name">{value(profile, "guarantorName") || "Patient"}</strong><small className="address">{value(profile, "guarantorType").replaceAll("_", " ")}</small></td><td><Status value={value(profile, "verificationStatus")} /></td><td><Status value={value(profile, "patientBillingHold")} /></td><td><button className="table-button" disabled={value(profile, "status") !== "active"} onClick={() => openCloseResponsibility(profile)} type="button">{value(profile, "status") === "active" ? "Close period" : "Closed"}</button></td></tr>;
-                  })}</tbody></table>
-              </TablePanel>
+              <SelectedPatientInsurance data={data} patientId={selectedPatientId} isSaving={isSaving} onCheck={verifyPatientEligibility} />
             </>
           )}
 
@@ -676,7 +667,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
           <section aria-labelledby="operations-modal-title" aria-modal="true" className={`modal provider-modal ${module === "patients" ? "patient-modal" : ""}`} role="dialog">
             <div className="modal-header"><div><span className="eyebrow">{meta.eyebrow}</span><h2 id="operations-modal-title">{modalTitle(module, formMode)}</h2><p>Required fields are marked. Claim-related fields include CMS-1500 guidance.</p></div><button aria-label="Close dialog" className="close-button" onClick={() => setModalOpen(false)} type="button">×</button></div>
             <form onSubmit={submitForm}>
-              {module === "patients" && (formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm data={data} form={form} update={updateField} />)}
+              {module === "patients" && (formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm data={data} form={form} update={updateField} />)}
               {module === "scheduler" && <AppointmentForm data={data} form={form} update={updateField} />}
               {module === "eligibility" && <EligibilityForm data={data} form={form} update={updateField} />}
               {module === "clinical" && <EncounterForm data={data} form={form} update={updateField} />}
@@ -687,7 +678,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
               {module === "procedures" && <ProcedureForm form={form} update={updateField} />}
               {module === "integrations" && <IntegrationForm form={form} update={updateField} />}
               {error && <div className="notice error form-error">{error}</div>}
-              <div className="modal-footer"><button className="secondary-button" onClick={() => setModalOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{isSaving ? "Saving…" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button></div>
+              <div className="modal-footer"><button className="secondary-button" onClick={() => setModalOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{isSaving ? "Saving…" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button></div>
             </form>
           </section>
         </div>
@@ -702,6 +693,26 @@ function SummaryCards({ cards }: { cards: string[][] }) {
 
 function TablePanel({ title, description, search, setSearch, children }: { title: string; description: string; search?: string; setSearch?: (value: string) => void; children: React.ReactNode }) {
   return <section className="table-card operations-table"><div className="table-header"><div><h2>{title}</h2><p>{description}</p></div>{setSearch && <label className="search-field"><span aria-hidden="true">⌕</span><input aria-label={`Search ${title}`} onChange={(event) => setSearch(event.target.value)} placeholder="Search records" value={search} /></label>}</div><div className="table-wrap">{children}</div></section>;
+}
+
+function SelectedPatientInsurance({ data, patientId, isSaving, onCheck }: { data: WorkspaceData; patientId: string; isSaving: boolean; onCheck: (patientId: string, coverageId?: string) => void }) {
+  const patient = data.patients.find((item) => value(item, "id") === patientId);
+  if (!patient) return <section className="selected-insurance-panel empty"><strong>Select a patient</strong><span>Click a patient name to view insurance policies and coverage details.</span></section>;
+  const rank: Record<string, number> = { primary: 1, secondary: 2, tertiary: 3, unassigned: 4 };
+  const coverages = data.coverages
+    .filter((item) => value(item, "patientId") === patientId)
+    .sort((left, right) => (rank[value(left, "priority")] || 4) - (rank[value(right, "priority")] || 4));
+  const history = data.eligibilityUpdateHistory.filter((item) => value(item, "patientId") === patientId).slice(0, 4);
+  return <section className="selected-insurance-panel">
+    <header><div><span className="eyebrow">Selected patient insurance</span><h2>{value(patient, "firstName")} {value(patient, "lastName")}</h2><p>{coverages.length} recorded polic{coverages.length === 1 ? "y" : "ies"} · select Edit to change policy information</p></div><span className="mono">{value(patient, "accountNumber")}</span></header>
+    {coverages.length ? <div className="coverage-detail-grid">{coverages.map((coverage) => {
+      const plan = data.plans.find((item) => value(item, "id") === value(coverage, "planId"));
+      const payer = data.payers.find((item) => value(item, "id") === value(plan || {}, "payerId"));
+      const latest = data.eligibility.find((item) => value(item, "coverageId") === value(coverage, "id"));
+      return <article key={value(coverage, "id")}><div className="coverage-detail-heading"><span>{value(coverage, "priority")}</span><Status value={value(latest || {}, "status") || "not checked"} /></div><h3>{value(payer || {}, "name")} · {value(plan || {}, "name")}</h3><dl><div><dt>Member ID</dt><dd>{value(coverage, "memberId")}</dd></div><div><dt>Group</dt><dd>{value(coverage, "groupNumber") || "—"}</dd></div><div><dt>Effective</dt><dd>{shortDate(value(coverage, "effectiveDate"))}</dd></div><div><dt>Terminates</dt><dd>{value(coverage, "terminationDate") ? shortDate(value(coverage, "terminationDate")) : "Open"}</dd></div><div><dt>Subscriber</dt><dd>{value(coverage, "subscriberFirstName")} {value(coverage, "subscriberLastName")}</dd></div><div><dt>Relationship</dt><dd>{value(coverage, "relationship")}</dd></div></dl>{latest && <small>Last checked {shortDate(value(latest, "checkedAt"), true)} · {value(latest, "referenceNumber")}</small>}<button className="coverage-check-button" disabled={isSaving} onClick={() => onCheck(patientId, value(coverage, "id"))} type="button">Check this policy’s eligibility</button></article>;
+    })}</div> : <p className="no-coverage-message">No insurance policy is recorded for this patient.</p>}
+    {history.length > 0 && <div className="eligibility-audit"><strong>Recent eligibility-applied changes</strong>{history.map((item) => <span key={value(item, "id")}>{shortDate(value(item, "createdAt"), true)} · {value(item, "reason")} · {value(item, "changedBy")}</span>)}</div>}
+  </section>;
 }
 
 function PersonCell({ row }: { row: DataRow }) {
@@ -723,8 +734,7 @@ type FormProps = { data: WorkspaceData; form: Record<string, string | boolean>; 
 type SimpleFormProps = Omit<FormProps, "data">;
 
 function Input({ label, name, form, update, required, type = "text", hint, placeholder }: { label: string; name: string; form: Record<string, string | boolean>; update: FormProps["update"]; required?: boolean; type?: string; hint?: keyof typeof claimFieldHints; placeholder?: string }) {
-  const browserType = type === "date" ? "text" : type;
-  return <label className="field">{label} <span>{required && <b>*</b>}{hint && <ClaimFieldHint hint={claimFieldHints[hint]} />}</span><input type={browserType} required={required} placeholder={placeholder || (type === "date" ? "YYYY-MM-DD" : undefined)} value={String(form[name] || "")} onChange={(event) => update(name, event.target.value)} /></label>;
+  return <label className="field">{label} <span>{required && <b>*</b>}{hint && <ClaimFieldHint hint={claimFieldHints[hint]} />}</span><input type={type} required={required} placeholder={placeholder} value={String(form[name] || "")} onChange={(event) => update(name, event.target.value)} /></label>;
 }
 
 function Select({ label, name, form, update, options, required, hint }: { label: string; name: string; form: Record<string, string | boolean>; update: FormProps["update"]; options: [string, string][]; required?: boolean; hint?: keyof typeof claimFieldHints }) {
@@ -733,6 +743,42 @@ function Select({ label, name, form, update, options, required, hint }: { label:
 
 function Check({ label, name, form, update, hint }: { label: string; name: string; form: Record<string, string | boolean>; update: FormProps["update"]; hint?: keyof typeof claimFieldHints }) {
   return <label className="check-card"><input checked={Boolean(form[name])} onChange={(event) => update(name, event.target.checked)} type="checkbox" /><span><strong>{label} {hint && <ClaimFieldHint hint={claimFieldHints[hint]} />}</strong><small>Enabled for this record</small></span></label>;
+}
+
+function SubscriberFields({ form, update }: SimpleFormProps) {
+  const same = Boolean(form.subscriberSameAsPatient);
+  const patientValue = (patientKey: string, regularKey: string) => String(form[patientKey] || form[regularKey] || "");
+  function toggleSame(checked: boolean) {
+    update("subscriberSameAsPatient", checked);
+    if (checked) {
+      update("relationship", "self");
+      update("subscriberFirstName", patientValue("patientFirstName", "firstName"));
+      update("subscriberLastName", patientValue("patientLastName", "lastName"));
+      update("subscriberDateOfBirth", patientValue("patientDateOfBirth", "dateOfBirth"));
+      update("subscriberSex", patientValue("patientSex", "sex") || "unknown");
+      update("subscriberAddressLine1", String(form.addressLine1 || ""));
+      update("subscriberCity", String(form.city || ""));
+      update("subscriberState", String(form.state || ""));
+      update("subscriberPostalCode", String(form.postalCode || ""));
+    } else if (form.relationship === "self") {
+      update("relationship", "other");
+    }
+  }
+  return <>
+    <label className="subscriber-same-control"><input checked={same} onChange={(event) => toggleSame(event.target.checked)} type="checkbox" /><span><strong>Subscriber is the same as the patient</strong><small>Use the patient’s name, birth date, sex and address for this policy.</small></span></label>
+    {same
+      ? <div className="subscriber-auto-summary"><strong>{patientValue("patientFirstName", "firstName")} {patientValue("patientLastName", "lastName")}</strong><span>Subscriber details will be copied automatically when saved.</span></div>
+      : <div className="patient-subscriber-grid">
+        <Input label="Subscriber first name" name="subscriberFirstName" form={form} update={update} required hint="subscriberName" />
+        <Input label="Subscriber last name" name="subscriberLastName" form={form} update={update} required hint="subscriberName" />
+        <Input label="Subscriber DOB" name="subscriberDateOfBirth" form={form} update={update} required type="date" hint="subscriberBirthSex" />
+        <Select label="Subscriber sex" name="subscriberSex" form={form} update={update} required hint="subscriberBirthSex" options={[["male", "Male"], ["female", "Female"], ["unknown", "Unknown"]]} />
+        <div className="wide"><Input label="Subscriber address" name="subscriberAddressLine1" form={form} update={update} required hint="subscriberAddress" /></div>
+        <Input label="City" name="subscriberCity" form={form} update={update} required hint="subscriberAddress" />
+        <Input label="State" name="subscriberState" form={form} update={update} required hint="subscriberAddress" />
+        <Input label="ZIP" name="subscriberPostalCode" form={form} update={update} required hint="subscriberAddress" />
+      </div>}
+  </>;
 }
 
 function ResponsibilityForm({ data, form, update }: FormProps) {
@@ -827,13 +873,25 @@ function CoverageForm({ data, form, update }: FormProps) {
       <Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" />
       <Input label="Termination date" name="terminationDate" form={form} update={update} type="date" />
     </div></fieldset>
-    <fieldset><legend>Subscriber</legend><div className="form-grid">
-      <Input label="Subscriber first name" name="subscriberFirstName" form={form} update={update} required hint="subscriberName" />
-      <Input label="Subscriber last name" name="subscriberLastName" form={form} update={update} required hint="subscriberName" />
-      <Input label="Subscriber DOB" name="subscriberDateOfBirth" form={form} update={update} type="date" hint="subscriberBirthSex" />
-      <Select label="Subscriber sex" name="subscriberSex" form={form} update={update} hint="subscriberBirthSex" options={[["male", "Male"], ["female", "Female"], ["unknown", "Unknown"]]} />
-    </div><div className="responsibility-hold"><Check label="Verify this coverage immediately after saving" name="verifyEligibility" form={form} update={update} /></div></fieldset>
+    <fieldset><legend>Subscriber</legend><SubscriberFields form={form} update={update} /><div className="responsibility-hold"><Check label="Verify this coverage immediately after saving" name="verifyEligibility" form={form} update={update} /></div></fieldset>
     <div className="insurance-save-actions"><div><strong>Need another policy?</strong><span>Save this insurance and continue with the next available order.</span></div><button disabled={!form.planId || !form.memberId} name="submitIntent" type="submit" value="add-coverage">Save & add another insurance →</button></div>
+  </div>;
+}
+
+function EligibilityReviewForm({ review, form, update }: { review: DataRow | null; form: Record<string, string | boolean>; update: FormProps["update"] }) {
+  const details = (review?.details || {}) as DataRow;
+  const currentAddress = (details.currentPatientAddress || {}) as DataRow;
+  const returnedAddress = (details.returnedAddress || {}) as DataRow;
+  const addressText = (address: DataRow) => `${value(address, "addressLine1")} ${value(address, "addressLine2")}, ${value(address, "city")}, ${value(address, "state")} ${value(address, "postalCode")}`.replace(/\s+/g, " ").replace(" ,", ",").trim();
+  return <div className="eligibility-review">
+    <section className="responsibility-intro"><div><span className="eyebrow">Eligibility confirmation</span><h3>{value(details, "payerName")} · {value(details, "planName")}</h3><p>Review the 271 response before changing the patient master. Nothing is overwritten until you confirm.</p></div><Status value={value(review || {}, "status")} /></section>
+    <div className="eligibility-benefit-summary"><span>Member <strong>{value(details, "memberId")}</strong></span><span>Group <strong>{value(details, "groupNumber") || "—"}</strong></span><span>Effective <strong>{shortDate(value(details, "effectiveDate"))}</strong></span><span>Termination <strong>{value(details, "terminationDate") ? shortDate(value(details, "terminationDate")) : "Open"}</strong></span><span>Copay <strong>{currency(value(details, "copayAmount"))}</strong></span></div>
+    <fieldset><legend>Patient address decision</legend><div className="address-choice-grid">
+      <label className={form.addressChoice === "keep_current" ? "selected" : ""}><input checked={form.addressChoice === "keep_current"} name="address-review-choice" onChange={() => update("addressChoice", "keep_current")} type="radio" /><span><strong>Keep current patient address</strong><small>{addressText(currentAddress) || "No current address"}</small></span></label>
+      <label className={form.addressChoice === "use_eligibility" ? "selected" : ""}><input checked={form.addressChoice === "use_eligibility"} name="address-review-choice" onChange={() => update("addressChoice", "use_eligibility")} type="radio" /><span><strong>Use address returned by eligibility</strong><small>{addressText(returnedAddress) || "No address returned"}</small></span></label>
+    </div></fieldset>
+    <Input label="Reason for applying or retaining information" name="reason" form={form} update={update} required placeholder="271 response reviewed; address confirmed with patient" />
+    <div className="responsibility-rule-note"><strong>Audit protection</strong><span>PRACX records the previous values, eligibility response, selected address, reason, user and time.</span></div>
   </div>;
 }
 
@@ -952,7 +1010,7 @@ function PatientForm({ data, form, update }: FormProps) {
 
         {activeTab === "insurance" && <fieldset className="patient-tab-panel"><legend>Insurance policy</legend><p className="patient-section-copy">Set the normal coordination order here. Use DOS Order from the patient list whenever the order changes for a service-date range.</p><div className="patient-insurance-grid"><label className="field">Insurance plan <span><ClaimFieldHint hint={claimFieldHints.planName} /></span><select value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label><Input label="Member ID" name="memberId" form={form} update={update} hint="memberId" /><Input label="Group number" name="groupNumber" form={form} update={update} hint="groupNumber" /><Select label="Default insurance order" name="priority" form={form} update={update} options={[["primary", "Primary"], ["secondary", "Secondary"], ["tertiary", "Tertiary"], ["unassigned", "Unassigned / determine by DOS"]]} /><Select label="Relationship" name="relationship" form={form} update={update} hint="relationship" options={[["self", "Self"], ["spouse", "Spouse"], ["child", "Child"], ["other", "Other"]]} /><Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" /><Input label="Termination date" name="terminationDate" form={form} update={update} type="date" /></div><div className="patient-policy-options"><Check label="Accept assignment" name="acceptAssignment" form={form} update={update} hint="acceptAssignment" /><Check label="Release information" name="releaseOfInformation" form={form} update={update} hint="releaseInformation" /><Check label="Assignment of benefits" name="assignmentOfBenefits" form={form} update={update} hint="assignmentBenefits" /></div><div className="insurance-save-actions"><div><strong>Add Secondary or Tertiary insurance</strong><span>Save this patient and current policy, then continue directly to another policy.</span></div><button disabled={!form.planId || !form.memberId} name="submitIntent" type="submit" value="add-coverage">Save & add another insurance →</button></div></fieldset>}
 
-        {activeTab === "subscriber" && <fieldset className="patient-tab-panel"><legend>Subscriber & verification</legend><p className="patient-section-copy">Complete this section when the policyholder differs from the patient.</p><div className="patient-subscriber-grid"><Input label="Subscriber first name" name="subscriberFirstName" form={form} update={update} hint="subscriberName" /><Input label="Subscriber last name" name="subscriberLastName" form={form} update={update} hint="subscriberName" /><Input label="Subscriber DOB" name="subscriberDateOfBirth" form={form} update={update} type="date" hint="subscriberBirthSex" /><Select label="Subscriber sex" name="subscriberSex" form={form} update={update} hint="subscriberBirthSex" options={[["male", "Male"], ["female", "Female"], ["unknown", "Unknown"]]} /><div className="wide"><Input label="Subscriber address" name="subscriberAddressLine1" form={form} update={update} hint="subscriberAddress" /></div><Input label="City" name="subscriberCity" form={form} update={update} hint="subscriberAddress" /><Input label="State" name="subscriberState" form={form} update={update} hint="subscriberAddress" /><Input label="ZIP" name="subscriberPostalCode" form={form} update={update} hint="subscriberAddress" /></div><div className="eligibility-option"><Check label="Verify eligibility immediately after saving" name="verifyEligibility" form={form} update={update} /><p>PRACX sends a 270 inquiry and fills the returned payer, plan, coverage dates and benefit details. Live responses require an active eligibility adapter.</p></div></fieldset>}
+        {activeTab === "subscriber" && <fieldset className="patient-tab-panel"><legend>Subscriber & verification</legend><p className="patient-section-copy">Confirm whether the patient is the policy subscriber. Manual subscriber fields appear only when they are different.</p><SubscriberFields form={form} update={update} /><div className="eligibility-option"><Check label="Verify eligibility immediately after saving" name="verifyEligibility" form={form} update={update} /><p>PRACX sends a 270 inquiry and fills the returned payer, plan, coverage dates and benefit details. Live responses require an active eligibility adapter.</p></div></fieldset>}
 
         <div className="patient-tab-navigation">
           <button disabled={activeTabIndex === 0} onClick={() => setActiveTab(tabs[Math.max(0, activeTabIndex - 1)].id)} type="button">← Previous</button>
@@ -1094,6 +1152,7 @@ function IntegrationForm({ form, update }: SimpleFormProps) {
 }
 
 function modalTitle(module: OperationsModule, mode: string) {
+  if (module === "patients" && mode === "eligibility-review") return "Review eligibility updates";
   if (module === "patients" && mode === "responsibility") return "Add DOS responsibility profile";
   if (module === "patients" && mode === "close-responsibility") return "Close responsibility period";
   if (module === "patients" && mode === "coverage-order") return "Set default insurance order";

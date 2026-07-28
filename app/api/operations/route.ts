@@ -8,6 +8,7 @@ import {
   claimResponsibilitySnapshots,
   claims,
   eligibilityChecks,
+  eligibilityUpdateHistory,
   encounters,
   facilities,
   feeScheduleItems,
@@ -143,6 +144,10 @@ async function performEligibilityCheck(
       relationship: patientCoverages.relationship,
       effectiveDate: patientCoverages.effectiveDate,
       terminationDate: patientCoverages.terminationDate,
+      subscriberAddressLine1: patientCoverages.subscriberAddressLine1,
+      subscriberCity: patientCoverages.subscriberCity,
+      subscriberState: patientCoverages.subscriberState,
+      subscriberPostalCode: patientCoverages.subscriberPostalCode,
       planName: insurancePlans.name,
       planType: insurancePlans.planType,
       defaultGroupNumber: insurancePlans.defaultGroupNumber,
@@ -157,6 +162,7 @@ async function performEligibilityCheck(
       eq(patientCoverages.status, "active"),
       selectedCoverageId ? eq(patientCoverages.id, selectedCoverageId) : undefined,
     ))
+    .orderBy(sql`case ${patientCoverages.priority} when 'primary' then 1 when 'secondary' then 2 when 'tertiary' then 3 else 4 end`)
     .limit(1);
   if (!coverage) return { error: "No active coverage is available for this patient." };
 
@@ -182,6 +188,7 @@ async function performEligibilityCheck(
 
   const id = crypto.randomUUID();
   const referenceNumber = `ELG${Date.now().toString().slice(-8)}`;
+  const [patient] = await db.select().from(patients).where(eq(patients.id, patientId)).limit(1);
   const details = {
     payerName: coverage.payerName,
     payerIdentifier: coverage.payerIdentifier,
@@ -192,6 +199,20 @@ async function performEligibilityCheck(
     relationship: coverage.relationship,
     effectiveDate: coverage.effectiveDate,
     terminationDate: coverage.terminationDate,
+    returnedAddress: {
+      addressLine1: coverage.subscriberAddressLine1 || patient?.addressLine1 || "",
+      addressLine2: patient?.addressLine2 || "",
+      city: coverage.subscriberCity || patient?.city || "",
+      state: coverage.subscriberState || patient?.state || "",
+      postalCode: coverage.subscriberPostalCode || patient?.postalCode || "",
+    },
+    currentPatientAddress: {
+      addressLine1: patient?.addressLine1 || "",
+      addressLine2: patient?.addressLine2 || "",
+      city: patient?.city || "",
+      state: patient?.state || "",
+      postalCode: patient?.postalCode || "",
+    },
     status: "eligible",
     copayAmount: "30.00",
     deductibleRemaining: "420.00",
@@ -209,6 +230,7 @@ async function performEligibilityCheck(
     coinsurancePercent: details.coinsurancePercent,
     referenceNumber,
     responseSummary: `${details.responseMode}-mode 271 response: active ${coverage.planName} medical coverage. Verify payer-specific limitations.`,
+    responseDetails: JSON.stringify(details),
   });
   await db
     .update(appointments)
@@ -248,6 +270,7 @@ async function loadWorkspace() {
     responsibilityHistoryRows,
     responsibilitySnapshotRows,
     claimConfigurationRows,
+    eligibilityUpdateRows,
   ] = await Promise.all([
     db.select().from(patients).where(eq(patients.organizationId, DEFAULT_ORGANIZATION_ID)).orderBy(asc(patients.lastName)),
     db.select().from(patientCoverages).orderBy(asc(patientCoverages.priority)),
@@ -439,6 +462,7 @@ async function loadWorkspace() {
     db.select().from(responsibilityProfileHistory).orderBy(desc(responsibilityProfileHistory.createdAt)),
     db.select().from(claimResponsibilitySnapshots).orderBy(desc(claimResponsibilitySnapshots.createdAt)),
     db.select().from(claimConfigurationValues).where(eq(claimConfigurationValues.status, "active")).orderBy(asc(claimConfigurationValues.category), asc(claimConfigurationValues.code)),
+    db.select().from(eligibilityUpdateHistory).orderBy(desc(eligibilityUpdateHistory.createdAt)),
   ]);
 
   return {
@@ -467,6 +491,7 @@ async function loadWorkspace() {
     responsibilityHistory: responsibilityHistoryRows,
     claimResponsibilitySnapshots: responsibilitySnapshotRows,
     claimConfigurationValues: claimConfigurationRows,
+    eligibilityUpdateHistory: eligibilityUpdateRows,
   };
 }
 
@@ -497,6 +522,63 @@ export async function POST(request: Request) {
     const db = getDb();
     const today = dateOnly();
 
+    if (action === "confirmEligibilityUpdate") {
+      const eligibilityCheckId = clean(payload.eligibilityCheckId);
+      const addressChoice = clean(payload.addressChoice);
+      const reason = clean(payload.reason);
+      if (!eligibilityCheckId || !["keep_current", "use_eligibility"].includes(addressChoice) || !reason) {
+        return Response.json({ error: "Eligibility result, address choice and change reason are required." }, { status: 400 });
+      }
+      const [check] = await db.select().from(eligibilityChecks).where(eq(eligibilityChecks.id, eligibilityCheckId)).limit(1);
+      if (!check?.responseDetails) {
+        return Response.json({ error: "This eligibility result does not contain reviewable response details." }, { status: 400 });
+      }
+      const [[patient], [coverage]] = await Promise.all([
+        db.select().from(patients).where(eq(patients.id, check.patientId)).limit(1),
+        db.select().from(patientCoverages).where(eq(patientCoverages.id, check.coverageId)).limit(1),
+      ]);
+      if (!patient || !coverage || patient.organizationId !== DEFAULT_ORGANIZATION_ID) {
+        return Response.json({ error: "The eligibility record is no longer linked to an active patient record." }, { status: 404 });
+      }
+      const responseDetails = JSON.parse(check.responseDetails) as Record<string, unknown>;
+      const returnedAddress = (responseDetails.returnedAddress || {}) as Record<string, unknown>;
+      const beforeSnapshot = { patient, coverage };
+      const coverageUpdates = {
+        memberId: clean(responseDetails.memberId) || coverage.memberId,
+        groupNumber: clean(responseDetails.groupNumber) || coverage.groupNumber,
+        relationship: clean(responseDetails.relationship) || coverage.relationship,
+        effectiveDate: clean(responseDetails.effectiveDate) || coverage.effectiveDate,
+        terminationDate: clean(responseDetails.terminationDate) || coverage.terminationDate,
+      };
+      await db.update(patientCoverages).set(coverageUpdates).where(eq(patientCoverages.id, coverage.id));
+      let patientUpdates: Record<string, string> = {};
+      if (addressChoice === "use_eligibility") {
+        const addressLine1 = clean(returnedAddress.addressLine1);
+        const city = clean(returnedAddress.city);
+        const state = clean(returnedAddress.state).toUpperCase();
+        const postalCode = clean(returnedAddress.postalCode);
+        if (!addressLine1 || !city || !/^[A-Z]{2}$/.test(state) || !/^\d{5}(?:-\d{4})?$/.test(postalCode)) {
+          return Response.json({ error: "The eligibility response does not contain a complete, valid address." }, { status: 400 });
+        }
+        patientUpdates = { addressLine1, addressLine2: clean(returnedAddress.addressLine2), city, state, postalCode };
+        await db.update(patients).set({ ...patientUpdates, updatedAt: new Date().toISOString() }).where(eq(patients.id, patient.id));
+      }
+      const appliedSnapshot = { coverage: coverageUpdates, patientAddress: addressChoice === "use_eligibility" ? patientUpdates : "kept_current" };
+      await db.insert(eligibilityUpdateHistory).values({
+        id: crypto.randomUUID(),
+        eligibilityCheckId,
+        patientId: patient.id,
+        coverageId: coverage.id,
+        addressChoice,
+        beforeSnapshot: JSON.stringify(beforeSnapshot),
+        responseSnapshot: check.responseDetails,
+        appliedSnapshot: JSON.stringify(appliedSnapshot),
+        reason,
+        changedBy: currentUser.fullName,
+      });
+      return Response.json({ id: eligibilityCheckId, applied: appliedSnapshot });
+    }
+
     if (action === "createPatientCoverage") {
       const patientId = clean(payload.patientId);
       const planId = clean(payload.planId);
@@ -526,6 +608,11 @@ export async function POST(request: Request) {
         return Response.json({ error: "Coverage termination cannot be earlier than the effective date." }, { status: 400 });
       }
       const priority = coveragePriority(payload.priority);
+      const subscriberSameAsPatient = payload.subscriberSameAsPatient !== false;
+      const manualSubscriberFields = ["subscriberFirstName", "subscriberLastName", "subscriberDateOfBirth", "subscriberSex", "subscriberAddressLine1", "subscriberCity", "subscriberState", "subscriberPostalCode"];
+      if (!subscriberSameAsPatient && manualSubscriberFields.some((field) => !clean(payload[field]))) {
+        return Response.json({ error: "Enter the different subscriber’s name, birth date and address." }, { status: 400 });
+      }
       if (priority !== "unassigned") {
         await db.update(patientCoverages).set({ priority: "unassigned" }).where(and(
           eq(patientCoverages.patientId, patientId),
@@ -541,15 +628,15 @@ export async function POST(request: Request) {
         priority,
         memberId,
         groupNumber: clean(payload.groupNumber) || plan.defaultGroupNumber || null,
-        relationship: clean(payload.relationship) || "self",
-        subscriberFirstName: clean(payload.subscriberFirstName) || patient.firstName,
-        subscriberLastName: clean(payload.subscriberLastName) || patient.lastName,
-        subscriberDateOfBirth: clean(payload.subscriberDateOfBirth) || patient.dateOfBirth,
-        subscriberSex: clean(payload.subscriberSex) || patient.sex,
-        subscriberAddressLine1: patient.addressLine1,
-        subscriberCity: patient.city,
-        subscriberState: patient.state,
-        subscriberPostalCode: patient.postalCode,
+        relationship: subscriberSameAsPatient ? "self" : clean(payload.relationship) || "other",
+        subscriberFirstName: subscriberSameAsPatient ? patient.firstName : clean(payload.subscriberFirstName),
+        subscriberLastName: subscriberSameAsPatient ? patient.lastName : clean(payload.subscriberLastName),
+        subscriberDateOfBirth: subscriberSameAsPatient ? patient.dateOfBirth : clean(payload.subscriberDateOfBirth),
+        subscriberSex: subscriberSameAsPatient ? patient.sex : clean(payload.subscriberSex),
+        subscriberAddressLine1: subscriberSameAsPatient ? patient.addressLine1 : clean(payload.subscriberAddressLine1),
+        subscriberCity: subscriberSameAsPatient ? patient.city : clean(payload.subscriberCity),
+        subscriberState: subscriberSameAsPatient ? patient.state : clean(payload.subscriberState),
+        subscriberPostalCode: subscriberSameAsPatient ? patient.postalCode : clean(payload.subscriberPostalCode),
         effectiveDate,
         terminationDate,
         acceptAssignment: "yes",
@@ -852,6 +939,18 @@ export async function POST(request: Request) {
       if (!/^\d{5}(?:-\d{4})?$/.test(postalCode)) {
         return Response.json({ error: "ZIP must contain 5 digits, with an optional 4-digit extension." }, { status: 400 });
       }
+      const planId = clean(payload.planId);
+      const memberId = clean(payload.memberId);
+      const effectiveDate = clean(payload.effectiveDate) || null;
+      const terminationDate = clean(payload.terminationDate) || null;
+      if (effectiveDate && terminationDate && terminationDate < effectiveDate) {
+        return Response.json({ error: "Coverage termination cannot be earlier than the effective date." }, { status: 400 });
+      }
+      const subscriberSameAsPatient = payload.subscriberSameAsPatient !== false;
+      const manualSubscriberFields = ["subscriberFirstName", "subscriberLastName", "subscriberDateOfBirth", "subscriberSex", "subscriberAddressLine1", "subscriberCity", "subscriberState", "subscriberPostalCode"];
+      if (planId && memberId && !subscriberSameAsPatient && manualSubscriberFields.some((field) => !clean(payload[field]))) {
+        return Response.json({ error: "Enter the different subscriber’s name, birth date and address." }, { status: 400 });
+      }
       const patientId = crypto.randomUUID();
       const accountNumber = `PX${Date.now().toString().slice(-6)}`;
       await db.insert(patients).values({
@@ -874,8 +973,6 @@ export async function POST(request: Request) {
         maritalStatus: clean(payload.maritalStatus) || null,
         status: "active",
       });
-      const planId = clean(payload.planId);
-      const memberId = clean(payload.memberId);
       let coverageId = "";
       if (planId && memberId) {
         coverageId = crypto.randomUUID();
@@ -886,17 +983,17 @@ export async function POST(request: Request) {
           priority: coveragePriority(payload.priority),
           memberId,
           groupNumber: clean(payload.groupNumber) || null,
-          relationship: clean(payload.relationship) || "self",
-          subscriberFirstName: clean(payload.subscriberFirstName) || firstName,
-          subscriberLastName: clean(payload.subscriberLastName) || lastName,
-          subscriberDateOfBirth: clean(payload.subscriberDateOfBirth) || dateOfBirth,
-          subscriberSex: clean(payload.subscriberSex) || clean(payload.sex) || null,
-          subscriberAddressLine1: clean(payload.subscriberAddressLine1) || addressLine1,
-          subscriberCity: clean(payload.subscriberCity) || city,
-          subscriberState: clean(payload.subscriberState) || state,
-          subscriberPostalCode: clean(payload.subscriberPostalCode) || postalCode,
-          effectiveDate: clean(payload.effectiveDate) || null,
-          terminationDate: clean(payload.terminationDate) || null,
+          relationship: subscriberSameAsPatient ? "self" : clean(payload.relationship) || "other",
+          subscriberFirstName: subscriberSameAsPatient ? firstName : clean(payload.subscriberFirstName),
+          subscriberLastName: subscriberSameAsPatient ? lastName : clean(payload.subscriberLastName),
+          subscriberDateOfBirth: subscriberSameAsPatient ? dateOfBirth : clean(payload.subscriberDateOfBirth),
+          subscriberSex: subscriberSameAsPatient ? clean(payload.sex) || "unknown" : clean(payload.subscriberSex),
+          subscriberAddressLine1: subscriberSameAsPatient ? addressLine1 : clean(payload.subscriberAddressLine1),
+          subscriberCity: subscriberSameAsPatient ? city : clean(payload.subscriberCity),
+          subscriberState: subscriberSameAsPatient ? state : clean(payload.subscriberState),
+          subscriberPostalCode: subscriberSameAsPatient ? postalCode : clean(payload.subscriberPostalCode),
+          effectiveDate,
+          terminationDate,
           acceptAssignment: payload.acceptAssignment === false ? "no" : "yes",
           releaseOfInformation: payload.releaseOfInformation === false ? "no" : "yes",
           assignmentOfBenefits: payload.assignmentOfBenefits === false ? "no" : "yes",
@@ -944,8 +1041,18 @@ export async function POST(request: Request) {
       const planId = clean(payload.planId);
       const memberId = clean(payload.memberId);
       const coverageId = clean(payload.coverageId);
+      const effectiveDate = clean(payload.effectiveDate) || null;
+      const terminationDate = clean(payload.terminationDate) || null;
       if (Boolean(planId) !== Boolean(memberId)) {
         return Response.json({ error: "Insurance plan and member ID must be entered together." }, { status: 400 });
+      }
+      if (effectiveDate && terminationDate && terminationDate < effectiveDate) {
+        return Response.json({ error: "Coverage termination cannot be earlier than the effective date." }, { status: 400 });
+      }
+      const subscriberSameAsPatient = payload.subscriberSameAsPatient !== false;
+      const manualSubscriberFields = ["subscriberFirstName", "subscriberLastName", "subscriberDateOfBirth", "subscriberSex", "subscriberAddressLine1", "subscriberCity", "subscriberState", "subscriberPostalCode"];
+      if (planId && memberId && !subscriberSameAsPatient && manualSubscriberFields.some((field) => !clean(payload[field]))) {
+        return Response.json({ error: "Enter the different subscriber’s name, birth date and address." }, { status: 400 });
       }
       const [existingPatient] = await db.select().from(patients).where(eq(patients.id, id)).limit(1);
       if (!existingPatient || existingPatient.organizationId !== DEFAULT_ORGANIZATION_ID) {
@@ -986,17 +1093,17 @@ export async function POST(request: Request) {
           priority,
           memberId,
           groupNumber: clean(payload.groupNumber) || null,
-          relationship: clean(payload.relationship) || "self",
-          subscriberFirstName: clean(payload.subscriberFirstName) || firstName,
-          subscriberLastName: clean(payload.subscriberLastName) || lastName,
-          subscriberDateOfBirth: clean(payload.subscriberDateOfBirth) || dateOfBirth,
-          subscriberSex: clean(payload.subscriberSex) || clean(payload.sex) || null,
-          subscriberAddressLine1: clean(payload.subscriberAddressLine1) || addressLine1,
-          subscriberCity: clean(payload.subscriberCity) || city,
-          subscriberState: clean(payload.subscriberState) || state,
-          subscriberPostalCode: clean(payload.subscriberPostalCode) || postalCode,
-          effectiveDate: clean(payload.effectiveDate) || null,
-          terminationDate: clean(payload.terminationDate) || null,
+          relationship: subscriberSameAsPatient ? "self" : clean(payload.relationship) || "other",
+          subscriberFirstName: subscriberSameAsPatient ? firstName : clean(payload.subscriberFirstName),
+          subscriberLastName: subscriberSameAsPatient ? lastName : clean(payload.subscriberLastName),
+          subscriberDateOfBirth: subscriberSameAsPatient ? dateOfBirth : clean(payload.subscriberDateOfBirth),
+          subscriberSex: subscriberSameAsPatient ? clean(payload.sex) || "unknown" : clean(payload.subscriberSex),
+          subscriberAddressLine1: subscriberSameAsPatient ? addressLine1 : clean(payload.subscriberAddressLine1),
+          subscriberCity: subscriberSameAsPatient ? city : clean(payload.subscriberCity),
+          subscriberState: subscriberSameAsPatient ? state : clean(payload.subscriberState),
+          subscriberPostalCode: subscriberSameAsPatient ? postalCode : clean(payload.subscriberPostalCode),
+          effectiveDate,
+          terminationDate,
           acceptAssignment: payload.acceptAssignment === false ? "no" as const : "yes" as const,
           releaseOfInformation: payload.releaseOfInformation === false ? "no" as const : "yes" as const,
           assignmentOfBenefits: payload.assignmentOfBenefits === false ? "no" as const : "yes" as const,
@@ -1075,9 +1182,10 @@ export async function POST(request: Request) {
 
     if (action === "checkEligibility") {
       const patientId = clean(payload.patientId);
+      const coverageId = clean(payload.coverageId);
       const dos = clean(payload.dateOfService) || today;
       if (!patientId) return Response.json({ error: "Select a patient to verify." }, { status: 400 });
-      const eligibility = await performEligibilityCheck(db, patientId, dos);
+      const eligibility = await performEligibilityCheck(db, patientId, dos, coverageId || undefined);
       if ("error" in eligibility) return Response.json({ error: eligibility.error }, { status: 400 });
       return Response.json(eligibility);
     }

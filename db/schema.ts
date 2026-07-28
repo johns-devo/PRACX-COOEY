@@ -377,9 +377,28 @@ export const eligibilityChecks = sqliteTable(
     coinsurancePercent: text("coinsurance_percent").notNull().default("0"),
     referenceNumber: text("reference_number"),
     responseSummary: text("response_summary"),
+    responseDetails: text("response_details"),
     checkedAt: text("checked_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index("eligibility_patient_dos_idx").on(table.patientId, table.dateOfService)],
+);
+
+export const eligibilityUpdateHistory = sqliteTable(
+  "eligibility_update_history",
+  {
+    id: text("id").primaryKey(),
+    eligibilityCheckId: text("eligibility_check_id").notNull().references(() => eligibilityChecks.id),
+    patientId: text("patient_id").notNull().references(() => patients.id),
+    coverageId: text("coverage_id").notNull().references(() => patientCoverages.id),
+    addressChoice: text("address_choice").notNull(),
+    beforeSnapshot: text("before_snapshot").notNull(),
+    responseSnapshot: text("response_snapshot").notNull(),
+    appliedSnapshot: text("applied_snapshot").notNull(),
+    reason: text("reason").notNull(),
+    changedBy: text("changed_by").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("eligibility_update_patient_idx").on(table.patientId, table.createdAt)],
 );
 
 export const appointments = sqliteTable(
