@@ -580,6 +580,45 @@ export const claimLines = sqliteTable(
   (table) => [uniqueIndex("claim_line_unique").on(table.claimId, table.lineNumber)],
 );
 
+export const claimConfigurationValues = sqliteTable(
+  "claim_configuration_values",
+  {
+    id: text("id").primaryKey(),
+    category: text("category").notNull(),
+    code: text("code").notNull(),
+    displayName: text("display_name").notNull(),
+    internalGuidance: text("internal_guidance"),
+    source: text("source").notNull().default("NUCC 1500 v13.0 7/25"),
+    isOfficial: text("is_official", { enum: ["yes", "no"] }).notNull().default("yes"),
+    payerId: text("payer_id").references(() => payers.id),
+    effectiveDate: text("effective_date"),
+    terminationDate: text("termination_date"),
+    status: text("status", { enum: ["active", "inactive"] }).notNull().default("active"),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("claim_config_category_code_payer_unique").on(table.category, table.code, table.payerId),
+    index("claim_config_category_status_idx").on(table.category, table.status),
+  ],
+);
+
+export const claimConfigurationHistory = sqliteTable(
+  "claim_configuration_history",
+  {
+    id: text("id").primaryKey(),
+    configurationId: text("configuration_id").notNull().references(() => claimConfigurationValues.id),
+    action: text("action").notNull(),
+    beforeSnapshot: text("before_snapshot"),
+    afterSnapshot: text("after_snapshot").notNull(),
+    changedBy: text("changed_by").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("claim_config_history_config_idx").on(table.configurationId)],
+);
+
 export const claimResponsibilitySnapshots = sqliteTable(
   "claim_responsibility_snapshots",
   {

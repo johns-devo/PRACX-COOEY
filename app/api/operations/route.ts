@@ -4,6 +4,7 @@ import {
   appointments,
   billingResponsibilityProfiles,
   claimLines,
+  claimConfigurationValues,
   claimResponsibilitySnapshots,
   claims,
   eligibilityChecks,
@@ -239,6 +240,7 @@ async function loadWorkspace() {
     responsibilitySourceRows,
     responsibilityHistoryRows,
     responsibilitySnapshotRows,
+    claimConfigurationRows,
   ] = await Promise.all([
     db.select().from(patients).where(eq(patients.organizationId, DEFAULT_ORGANIZATION_ID)).orderBy(asc(patients.lastName)),
     db.select().from(patientCoverages).orderBy(asc(patientCoverages.priority)),
@@ -429,6 +431,7 @@ async function loadWorkspace() {
     db.select().from(responsibilitySources).orderBy(asc(responsibilitySources.sequence)),
     db.select().from(responsibilityProfileHistory).orderBy(desc(responsibilityProfileHistory.createdAt)),
     db.select().from(claimResponsibilitySnapshots).orderBy(desc(claimResponsibilitySnapshots.createdAt)),
+    db.select().from(claimConfigurationValues).where(eq(claimConfigurationValues.status, "active")).orderBy(asc(claimConfigurationValues.category), asc(claimConfigurationValues.code)),
   ]);
 
   return {
@@ -456,6 +459,7 @@ async function loadWorkspace() {
     responsibilitySources: responsibilitySourceRows,
     responsibilityHistory: responsibilityHistoryRows,
     claimResponsibilitySnapshots: responsibilitySnapshotRows,
+    claimConfigurationValues: claimConfigurationRows,
   };
 }
 
@@ -1151,20 +1155,28 @@ export async function POST(request: Request) {
         epsdtReasonCode: clean(payload.epsdtReasonCode),
         supplementalQualifier: clean(payload.supplementalQualifier),
       };
+      const activeConfiguration = await db
+        .select({ category: claimConfigurationValues.category, code: claimConfigurationValues.code })
+        .from(claimConfigurationValues)
+        .where(eq(claimConfigurationValues.status, "active"));
+      const configuredCodes = (category: string, fallback: string[]) => {
+        const values = activeConfiguration.filter((item) => item.category === category).map((item) => item.code);
+        return ["", ...(values.length ? values : fallback)];
+      };
       const allowedQualifiers: Record<keyof typeof claimQualifiers, string[]> = {
-        otherClaimIdQualifier: ["", "Y4"],
-        conditionDateQualifier: ["", "431", "484"],
-        otherDateQualifier: ["", "454", "304", "453", "439", "455", "471", "090", "091", "444"],
-        referringProviderQualifier: ["", "DN", "DK", "DQ"],
-        referringOtherIdQualifier: ["", "0B", "1G", "G2", "LU"],
-        additionalClaimInfoQualifier: ["", "0B", "1G", "G2", "LU", "N5", "X5", "ZZ", "ADD", "CER", "DCP", "DGN", "TPO"],
-        serviceFacilityOtherIdQualifier: ["", "0B", "G2", "LU"],
-        billingProviderOtherIdQualifier: ["", "0B", "G2", "ZZ"],
-        icdIndicator: ["0", "9"],
-        billFrequencyCode: ["", "7", "8"],
-        renderingOtherIdQualifier: ["", "0B", "1G", "G2", "LU", "ZZ"],
-        epsdtReasonCode: ["", "AV", "S2", "ST", "NU"],
-        supplementalQualifier: ["", "ZZ", "N4", "DI", "CTR", "JP", "JO"],
+        otherClaimIdQualifier: configuredCodes("other_claim_id", ["Y4"]),
+        conditionDateQualifier: configuredCodes("condition_date", ["431", "484"]),
+        otherDateQualifier: configuredCodes("other_date", ["454", "304", "453", "439", "455", "471", "090", "091", "444"]),
+        referringProviderQualifier: configuredCodes("provider_role", ["DN", "DK", "DQ"]),
+        referringOtherIdQualifier: configuredCodes("box17a_identifier", ["0B", "1G", "G2", "LU"]),
+        additionalClaimInfoQualifier: configuredCodes("box19_information", ["0B", "1G", "G2", "LU", "N5", "X5", "ZZ", "ADD", "CER", "DCP", "DGN", "TPO"]),
+        serviceFacilityOtherIdQualifier: configuredCodes("facility_identifier", ["0B", "G2", "LU"]),
+        billingProviderOtherIdQualifier: configuredCodes("billing_identifier", ["0B", "G2", "ZZ"]),
+        icdIndicator: configuredCodes("icd_indicator", ["0", "9"]).filter(Boolean),
+        billFrequencyCode: configuredCodes("bill_frequency", ["7", "8"]),
+        renderingOtherIdQualifier: configuredCodes("rendering_identifier", ["0B", "1G", "G2", "LU", "ZZ"]),
+        epsdtReasonCode: configuredCodes("epsdt_reason", ["AV", "S2", "ST", "NU"]),
+        supplementalQualifier: configuredCodes("supplemental", ["ZZ", "N4", "DI", "CTR", "JP", "JO"]),
       };
       const invalidQualifier = (Object.keys(claimQualifiers) as (keyof typeof claimQualifiers)[])
         .find((key) => !allowedQualifiers[key].includes(claimQualifiers[key]));

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local authentication", async () => {
-  const [workspace, providerWorkspace, operationsWorkspace, operationsApi, claimHint, cms1500, providerApi, referringApi, dashboard, login, auth, onboarding, layout, schema, migration, providerMigration, operationsMigration, responsibilityMigration, cmsQualifierMigration, box19Migration, responsibilityStatusMigration, currentClaimMigration] = await Promise.all([
+  const [workspace, providerWorkspace, operationsWorkspace, operationsApi, claimHint, cms1500, providerApi, referringApi, dashboard, login, auth, onboarding, layout, schema, migration, providerMigration, operationsMigration, responsibilityMigration, cmsQualifierMigration, box19Migration, responsibilityStatusMigration, currentClaimMigration, claimConfigWorkspace, claimConfigApi, claimConfigDefaults, claimConfigPage, claimConfigMigration] = await Promise.all([
     readFile(new URL("../app/FacilityWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/ProviderWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/OperationsWorkspace.tsx", import.meta.url), "utf8"),
@@ -50,6 +50,11 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
       new URL("../drizzle/0009_living_ronan.sql", import.meta.url),
       "utf8",
     ),
+    readFile(new URL("../app/ClaimConfigurationWorkspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/claim-configuration/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/claim-configuration.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/setup/claim-configuration/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0010_tricky_malcolm_colcord.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(layout, /PRACX Care Operations/);
@@ -205,6 +210,18 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(currentClaimMigration, /insurance_type_code/);
   assert.match(currentClaimMigration, /emergency_indicator/);
   assert.match(currentClaimMigration, /ndc_unit_qualifier/);
+  assert.match(claimConfigWorkspace, /Administrator controls/);
+  assert.match(claimConfigWorkspace, /Official code/);
+  assert.match(claimConfigWorkspace, /Save audited change/);
+  assert.match(claimConfigApi, /Administrator access is required/);
+  assert.match(claimConfigApi, /updated_official_controls/);
+  assert.match(claimConfigDefaults, /NUCC 1500 v13\.0 7\/25/);
+  assert.match(claimConfigDefaults, /other_claim_id/);
+  assert.match(claimConfigPage, /user\.role\.toLowerCase\(\) !== "administrator"/);
+  assert.match(claimConfigMigration, /CREATE TABLE `claim_configuration_values`/);
+  assert.match(claimConfigMigration, /CREATE TABLE `claim_configuration_history`/);
+  assert.match(operationsWorkspace, /Claim configuration/);
+  assert.match(operationsWorkspace, /claimConfigurationValues/);
   assert.match(operationsApi, /exact ZIP\+4/);
   assert.match(operationsApi, /Insurance plan and member ID must be entered together/);
   assert.match(operationsApi, /live eligibility adapter still requires credentials/);

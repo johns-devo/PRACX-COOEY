@@ -2667,6 +2667,149 @@ form .patient-tab-panel {
   }
 }
 
+.claim-config-page {
+  min-height: 100vh;
+  padding: 34px;
+  background: #f4f7f6;
+  color: #183b34;
+}
+
+.claim-config-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 30px;
+  margin-bottom: 24px;
+}
+
+.claim-config-header h1 {
+  margin: 4px 0 8px;
+  font-family: Georgia, serif;
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  font-weight: 500;
+}
+
+.claim-config-header p {
+  max-width: 720px;
+  margin: 0;
+  color: #687b76;
+}
+
+.claim-config-account {
+  display: grid;
+  min-width: 190px;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid #d6e2de;
+  border-radius: 14px;
+  background: white;
+}
+
+.claim-config-account span { color: #74847f; font-size: .82rem; }
+.claim-config-account a { margin-top: 6px; color: #14795f; font-weight: 700; }
+
+.claim-config-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.claim-config-summary article {
+  display: grid;
+  gap: 3px;
+  padding: 18px;
+  border: 1px solid #d9e4e1;
+  border-radius: 14px;
+  background: white;
+}
+
+.claim-config-summary strong { font-size: 1.65rem; }
+.claim-config-summary span { color: #71817d; font-size: .86rem; }
+
+.claim-config-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
+  align-items: start;
+}
+
+.claim-config-list,
+.claim-config-editor {
+  border: 1px solid #d8e3df;
+  border-radius: 16px;
+  background: white;
+  box-shadow: 0 10px 30px rgba(20, 54, 46, .05);
+}
+
+.claim-config-list { overflow: hidden; }
+.claim-config-toolbar { display: grid; grid-template-columns: 220px 1fr auto; gap: 10px; padding: 14px; border-bottom: 1px solid #e3ebe8; }
+.claim-config-toolbar input,
+.claim-config-toolbar select,
+.claim-config-toolbar button,
+.claim-config-editor input,
+.claim-config-editor select,
+.claim-config-editor textarea {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid #cad9d4;
+  border-radius: 9px;
+  background: white;
+  color: #183b34;
+  font: inherit;
+}
+
+.claim-config-toolbar button,
+.config-save {
+  border: 0 !important;
+  background: #126b55 !important;
+  color: white !important;
+  font-weight: 750 !important;
+  cursor: pointer;
+}
+
+.claim-config-list table { min-width: 940px; }
+.claim-config-list th,
+.claim-config-list td { padding: 13px 14px; vertical-align: top; }
+
+.config-source {
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.config-source.official { background: #e8f4ef; color: #17684f; }
+.config-source.custom { background: #fff3d7; color: #8a5c00; }
+
+.claim-config-editor { position: sticky; top: 18px; padding: 20px; }
+.claim-config-editor h2 { margin: 6px 0 14px; font-family: Georgia, serif; font-weight: 500; }
+.claim-config-editor form { display: grid; gap: 12px; }
+.claim-config-editor label { display: grid; gap: 6px; color: #556a64; font-size: .82rem; font-weight: 750; }
+.claim-config-editor input:disabled,
+.claim-config-editor select:disabled { background: #f0f3f2; color: #778681; }
+.config-date-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.config-lock-note { padding: 11px; border-left: 3px solid #e8a514; background: #fff9ea; color: #6e582b; font-size: .84rem; line-height: 1.45; }
+.config-save { min-height: 46px; border-radius: 10px; }
+.form-success { margin: 12px 14px; color: #126b55; font-weight: 700; }
+
+@media (max-width: 1050px) {
+  .claim-config-layout { grid-template-columns: 1fr; }
+  .claim-config-editor { position: static; }
+  .claim-config-summary { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 680px) {
+  .claim-config-page { padding: 18px; }
+  .claim-config-header { display: grid; }
+  .claim-config-account { width: 100%; }
+  .claim-config-summary { grid-template-columns: 1fr 1fr; }
+  .claim-config-toolbar { grid-template-columns: 1fr; }
+  .config-date-grid { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 460px) {
   .modal-backdrop {
     padding: 8px;

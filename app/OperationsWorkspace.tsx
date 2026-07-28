@@ -45,6 +45,7 @@ type WorkspaceData = {
   responsibilitySources: DataRow[];
   responsibilityHistory: DataRow[];
   claimResponsibilitySnapshots: DataRow[];
+  claimConfigurationValues: DataRow[];
   error?: string;
 };
 
@@ -484,6 +485,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
           ))}
           <p className="nav-label setup-label">Configuration</p>
           <Link className={`nav-item ${setupModule ? "active" : ""}`} href="/setup"><span className="nav-dot" aria-hidden="true" />Practice setup</Link>
+          {currentUser.role.toLowerCase() === "administrator" && <Link className="nav-item" href="/setup/claim-configuration"><span className="nav-dot" aria-hidden="true" />Claim configuration</Link>}
           <Link className={`nav-item ${module === "integrations" ? "active" : ""}`} href="/integrations"><span className="nav-dot" aria-hidden="true" />Integrations</Link>
         </nav>
         <div className="sidebar-footer"><span className="avatar">{initials}</span><div className="sidebar-user"><strong>{currentUser.fullName}</strong><small>{currentUser.role}</small></div><button aria-label="Sign out" className="signout-button" onClick={signOut} type="button">↗</button></div>
@@ -506,6 +508,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
               <Link className={module === "payers" ? "selected" : ""} href="/setup/payers" role="tab">Payers & plans</Link>
               <Link className={module === "fees" ? "selected" : ""} href="/setup/fee-schedules" role="tab">Fee schedules</Link>
               <Link className={module === "procedures" ? "selected" : ""} href="/setup/procedure-codes" role="tab">Procedure codes</Link>
+              {currentUser.role.toLowerCase() === "administrator" && <Link href="/setup/claim-configuration" role="tab">Claim configuration</Link>}
             </div>
           )}
           {notice && <div className="notice success">{notice}</div>}
@@ -956,10 +959,16 @@ function EncounterForm({ data, form, update }: FormProps) {
 }
 
 function ClaimForm({ data, form, update }: FormProps) {
+  const configured = (category: string, fallback: [string, string][]) => {
+    const options = data.claimConfigurationValues
+      .filter((row) => value(row, "category") === category && value(row, "status") === "active")
+      .map((row) => [value(row, "code"), `${value(row, "code")} · ${value(row, "displayName")}`] as [string, string]);
+    return options.length ? options : fallback;
+  };
   return <>
     <fieldset><legend>Generate from signed encounter</legend><div className="form-grid"><Select label="Ready encounter" name="encounterId" form={form} update={update} required options={data.encounters.filter((row) => ["ready_to_bill", "signed"].includes(value(row, "status"))).map((row) => [value(row, "id"), `${value(row, "patientName")} · ${value(row, "dateOfService")} · ${list(row.procedureCodes).join(", ")}`])} /></div><p className="form-guidance">PRACX copies demographics, the DOS responsibility snapshot, provider, facility, diagnoses and procedures into the professional claim.</p></fieldset>
     <fieldset><legend>Coverage and condition — Boxes 1, 10 and 11d</legend><div className="form-grid">
-      <Select label="Box 1 insurance type" name="insuranceTypeCode" form={form} update={update} required hint="insuranceType" options={[["medicare", "Medicare"], ["medicaid", "Medicaid"], ["tricare", "TRICARE"], ["champva", "CHAMPVA"], ["group", "Group health plan"], ["feca", "FECA"], ["black_lung", "Black Lung"], ["other", "Other"]]} />
+      <Select label="Box 1 insurance type" name="insuranceTypeCode" form={form} update={update} required hint="insuranceType" options={configured("insurance_type", [["medicare", "Medicare"], ["medicaid", "Medicaid"], ["tricare", "TRICARE"], ["champva", "CHAMPVA"], ["group", "Group health plan"], ["feca", "FECA"], ["black_lung", "Black Lung"], ["other", "Other"]])} />
       <Select label="Box 11d another health plan?" name="otherPlanIndicator" form={form} update={update} options={[["Y", "Yes"], ["N", "No"]]} />
       <Select label="Box 10a employment related?" name="employmentRelated" form={form} update={update} options={[["Y", "Yes"], ["N", "No"]]} />
       <Select label="Box 10b auto accident?" name="autoAccidentRelated" form={form} update={update} options={[["Y", "Yes"], ["N", "No"]]} />
@@ -968,25 +977,25 @@ function ClaimForm({ data, form, update }: FormProps) {
       <div className="span-2"><Input label="Box 10d NUCC condition codes" name="claimConditionCodes" form={form} update={update} placeholder="Separate codes with commas" /></div>
     </div></fieldset>
     <fieldset><legend>Claim-level CMS-1500 details</legend><div className="form-grid">
-      <Select label="Box 11b qualifier" name="otherClaimIdQualifier" form={form} update={update} hint="otherClaimId" options={[["Y4", "Y4 · Agency / property casualty claim number"]]} />
+      <Select label="Box 11b qualifier" name="otherClaimIdQualifier" form={form} update={update} hint="otherClaimId" options={configured("other_claim_id", [["Y4", "Y4 · Agency / property casualty claim number"]])} />
       <Input label="Box 11b other claim ID" name="otherClaimId" form={form} update={update} hint="otherClaimId" />
-      <Select label="Box 14 date qualifier" name="conditionDateQualifier" form={form} update={update} hint="currentIllnessDate" options={[["431", "431 · Onset of current symptoms or illness"], ["484", "484 · Last menstrual period"]]} />
+      <Select label="Box 14 date qualifier" name="conditionDateQualifier" form={form} update={update} hint="currentIllnessDate" options={configured("condition_date", [["431", "431 · Onset of current symptoms or illness"], ["484", "484 · Last menstrual period"]])} />
       <Input label="Box 14 date" name="conditionDate" form={form} update={update} type="date" hint="currentIllnessDate" />
-      <Select label="Box 15 other-date qualifier" name="otherDateQualifier" form={form} update={update} hint="otherDate" options={[
+      <Select label="Box 15 other-date qualifier" name="otherDateQualifier" form={form} update={update} hint="otherDate" options={configured("other_date", [
         ["454", "454 · Initial treatment"], ["304", "304 · Latest visit or consultation"], ["453", "453 · Acute manifestation of chronic condition"],
         ["439", "439 · Accident"], ["455", "455 · Last X-ray"], ["471", "471 · Prescription"],
         ["090", "090 · Report start / assumed care"], ["091", "091 · Report end / relinquished care"], ["444", "444 · First visit or consultation"],
-      ]} />
+      ])} />
       <Input label="Box 15 other date" name="otherDate" form={form} update={update} type="date" hint="otherDate" />
-      <Select label="Box 17 provider role" name="referringProviderQualifier" form={form} update={update} hint="referringQualifier" options={[["DN", "DN · Referring provider"], ["DK", "DK · Ordering provider"], ["DQ", "DQ · Supervising provider"]]} />
-      <Select label="Box 17a other-ID qualifier" name="referringOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={[["0B", "0B · State license"], ["1G", "1G · UPIN"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number (supervising only)"]]} />
+      <Select label="Box 17 provider role" name="referringProviderQualifier" form={form} update={update} hint="referringQualifier" options={configured("provider_role", [["DN", "DN · Referring provider"], ["DK", "DK · Ordering provider"], ["DQ", "DQ · Supervising provider"]])} />
+      <Select label="Box 17a other-ID qualifier" name="referringOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={configured("box17a_identifier", [["0B", "0B · State license"], ["1G", "1G · UPIN"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number (supervising only)"]])} />
       <Input label="Box 17a other provider ID" name="referringOtherId" form={form} update={update} hint="providerOtherId" />
-      <Select label="Box 19 information qualifier" name="additionalClaimInfoQualifier" form={form} update={update} hint="providerOtherId" options={[
+      <Select label="Box 19 information qualifier" name="additionalClaimInfoQualifier" form={form} update={update} hint="providerOtherId" options={configured("box19_information", [
         ["0B", "0B · State license"], ["1G", "1G · UPIN"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number"],
         ["N5", "N5 · Plan network ID"], ["X5", "X5 · State industrial accident ID"], ["ZZ", "ZZ · Provider taxonomy"],
         ["ADD", "ADD · Additional information"], ["CER", "CER · Certification narrative"], ["DCP", "DCP · Goals / rehabilitation potential / discharge plan"],
         ["DGN", "DGN · Diagnosis description"], ["TPO", "TPO · Third-party organization notes"],
-      ]} />
+      ])} />
       <Input label="Box 19 additional claim information" name="additionalClaimInfo" form={form} update={update} hint="providerOtherId" />
       <Input label="Box 16 unable to work from" name="unableToWorkFrom" form={form} update={update} type="date" />
       <Input label="Box 16 unable to work through" name="unableToWorkTo" form={form} update={update} type="date" />
@@ -994,15 +1003,15 @@ function ClaimForm({ data, form, update }: FormProps) {
       <Input label="Box 18 hospitalization through" name="hospitalizationTo" form={form} update={update} type="date" />
       <Select label="Box 20 outside lab?" name="outsideLabIndicator" form={form} update={update} options={[["Y", "Yes"], ["N", "No"]]} />
       <Input label="Box 20 purchased-service charge" name="outsideLabCharges" form={form} update={update} type="number" />
-      <Select label="Box 21 ICD indicator" name="icdIndicator" form={form} update={update} required hint="icdIndicator" options={[["0", "0 · ICD-10-CM"], ["9", "9 · ICD-9-CM"]]} />
-      <Select label="Box 22 bill frequency" name="billFrequencyCode" form={form} update={update} hint="billFrequency" options={[["7", "7 · Replacement of prior claim"], ["8", "8 · Void / cancel prior claim"]]} />
+      <Select label="Box 21 ICD indicator" name="icdIndicator" form={form} update={update} required hint="icdIndicator" options={configured("icd_indicator", [["0", "0 · ICD-10-CM"], ["9", "9 · ICD-9-CM"]])} />
+      <Select label="Box 22 bill frequency" name="billFrequencyCode" form={form} update={update} hint="billFrequency" options={configured("bill_frequency", [["7", "7 · Replacement of prior claim"], ["8", "8 · Void / cancel prior claim"]])} />
       <Input label="Box 22 original reference number" name="originalReferenceNumber" form={form} update={update} hint="billFrequency" />
       <Input label="Box 23 authorization / referral / CLIA" name="priorAuthorizationNumber" form={form} update={update} />
       <Select label="Box 25 federal tax ID type" name="federalTaxIdType" form={form} update={update} options={[["EIN", "EIN"], ["SSN", "SSN"]]} />
       <Input label="Box 25 federal tax ID" name="federalTaxIdNumber" form={form} update={update} />
-      <Select label="Box 32b facility ID qualifier" name="serviceFacilityOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={[["0B", "0B · State license"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number"]]} />
+      <Select label="Box 32b facility ID qualifier" name="serviceFacilityOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={configured("facility_identifier", [["0B", "0B · State license"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number"]])} />
       <Input label="Box 32b facility other ID" name="serviceFacilityOtherId" form={form} update={update} hint="providerOtherId" />
-      <Select label="Box 33b billing ID qualifier" name="billingProviderOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={[["0B", "0B · State license"], ["G2", "G2 · Commercial number"], ["ZZ", "ZZ · Provider taxonomy"]]} />
+      <Select label="Box 33b billing ID qualifier" name="billingProviderOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={configured("billing_identifier", [["0B", "0B · State license"], ["G2", "G2 · Commercial number"], ["ZZ", "ZZ · Provider taxonomy"]])} />
       <Input label="Box 33b billing provider ID" name="billingProviderOtherId" form={form} update={update} hint="providerOtherId" />
     </div></fieldset>
     <fieldset><legend>Service-line details — Box 24</legend><p className="form-guidance">These values apply to generated service lines. Procedure-specific supplemental information is attached to the first line.</p><div className="form-grid">
@@ -1012,13 +1021,13 @@ function ClaimForm({ data, form, update }: FormProps) {
       <Input label="Box 24E diagnosis pointers" name="lineDiagnosisPointers" form={form} update={update} placeholder="ABCD" />
       <Input label="Box 24G days / units" name="lineUnits" form={form} update={update} type="number" />
       <Select label="Box 24H EPSDT indicator" name="epsdtIndicator" form={form} update={update} options={[["Y", "Yes"], ["N", "No"]]} />
-      <Select label="Box 24H EPSDT reason" name="epsdtReasonCode" form={form} update={update} hint="epsdtReason" options={[["AV", "AV · Available, not used"], ["S2", "S2 · Under treatment"], ["ST", "ST · New service requested"], ["NU", "NU · Not used"]]} />
-      <Select label="Box 24I rendering ID qualifier" name="renderingOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={[["0B", "0B · State license"], ["1G", "1G · UPIN"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number"], ["ZZ", "ZZ · Provider taxonomy"]]} />
+      <Select label="Box 24H EPSDT reason" name="epsdtReasonCode" form={form} update={update} hint="epsdtReason" options={configured("epsdt_reason", [["AV", "AV · Available, not used"], ["S2", "S2 · Under treatment"], ["ST", "ST · New service requested"], ["NU", "NU · Not used"]])} />
+      <Select label="Box 24I rendering ID qualifier" name="renderingOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={configured("rendering_identifier", [["0B", "0B · State license"], ["1G", "1G · UPIN"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number"], ["ZZ", "ZZ · Provider taxonomy"]])} />
       <Input label="Box 24J rendering other ID" name="renderingOtherId" form={form} update={update} hint="providerOtherId" />
-      <Select label="Box 24 shaded qualifier" name="supplementalQualifier" form={form} update={update} hint="supplementalInformation" options={[["ZZ", "ZZ · Narrative for unspecified code"], ["N4", "N4 · National Drug Code"], ["DI", "DI · Device identifier"], ["CTR", "CTR · Contract rate"], ["JP", "JP · Tooth number"], ["JO", "JO · Oral-cavity area"]]} />
+      <Select label="Box 24 shaded qualifier" name="supplementalQualifier" form={form} update={update} hint="supplementalInformation" options={configured("supplemental", [["ZZ", "ZZ · Narrative for unspecified code"], ["N4", "N4 · National Drug Code"], ["DI", "DI · Device identifier"], ["CTR", "CTR · Contract rate"], ["JP", "JP · Tooth number"], ["JO", "JO · Oral-cavity area"]])} />
       <div className="span-2"><Input label="Box 24 shaded supplemental information" name="supplementalInformation" form={form} update={update} hint="supplementalInformation" /></div>
       <Input label="NDC 11-digit code" name="ndcCode" form={form} update={update} />
-      <Select label="NDC unit qualifier" name="ndcUnitQualifier" form={form} update={update} options={[["F2", "F2 · International unit"], ["GR", "GR · Gram"], ["ME", "ME · Milligram"], ["ML", "ML · Milliliter"], ["UN", "UN · Unit"]]} />
+      <Select label="NDC unit qualifier" name="ndcUnitQualifier" form={form} update={update} options={configured("ndc_unit", [["F2", "F2 · International unit"], ["GR", "GR · Gram"], ["ME", "ME · Milligram"], ["ML", "ML · Milliliter"], ["UN", "UN · Unit"]])} />
       <Input label="NDC quantity" name="ndcQuantity" form={form} update={update} type="number" />
       <Input label="NDC unit price" name="ndcUnitPrice" form={form} update={update} type="number" />
     </div><div className="checkbox-grid"><Check label="Box 24H Family Planning (Y)" name="familyPlanningIndicator" form={form} update={update} hint="epsdtReason" /></div></fieldset>

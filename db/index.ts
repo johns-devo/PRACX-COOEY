@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
+import { CLAIM_CONFIGURATION_DEFAULTS } from "../lib/claim-configuration";
 import * as schema from "./schema";
 
 export function getDb() {
@@ -459,6 +460,34 @@ export async function ensureCoreSchema() {
       service_date_from text NOT NULL,
       service_date_to text NOT NULL,
       FOREIGN KEY (claim_id) REFERENCES claims(id)
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS claim_configuration_values (
+      id text PRIMARY KEY NOT NULL,
+      category text NOT NULL,
+      code text NOT NULL,
+      display_name text NOT NULL,
+      internal_guidance text,
+      source text DEFAULT 'NUCC 1500 v13.0 7/25' NOT NULL,
+      is_official text DEFAULT 'yes' NOT NULL,
+      payer_id text,
+      effective_date text,
+      termination_date text,
+      status text DEFAULT 'active' NOT NULL,
+      created_by text,
+      updated_by text,
+      created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      FOREIGN KEY (payer_id) REFERENCES payers(id)
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS claim_configuration_history (
+      id text PRIMARY KEY NOT NULL,
+      configuration_id text NOT NULL,
+      action text NOT NULL,
+      before_snapshot text,
+      after_snapshot text NOT NULL,
+      changed_by text NOT NULL,
+      created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      FOREIGN KEY (configuration_id) REFERENCES claim_configuration_values(id)
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS claim_responsibility_snapshots (
       id text PRIMARY KEY NOT NULL,
@@ -1241,6 +1270,22 @@ export async function ensureCoreSchema() {
       VALUES (?, ?, ?, ?, ?, ?)`)
       .bind("int_era", "org_pracx_health", "era_835", "File import", "file", "configured"),
   ]);
+
+  await db.batch(CLAIM_CONFIGURATION_DEFAULTS.map((item) =>
+    db.prepare(`INSERT OR IGNORE INTO claim_configuration_values
+      (id, category, code, display_name, internal_guidance, source, is_official, effective_date, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(
+        `official:${item.category}:${item.code}`,
+        item.category,
+        item.code,
+        item.displayName,
+        item.guidance,
+        "NUCC 1500 v13.0 7/25",
+        "yes",
+        item.effectiveDate || "2025-07-01",
+        "active",
+      )));
 
   coreSchemaReady = true;
 }
