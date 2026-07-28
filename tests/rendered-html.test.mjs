@@ -237,7 +237,8 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.doesNotMatch(operationsWorkspace, /Billing responsibility timeline/);
   assert.match(operationsWorkspace, /Add DOS responsibility profile/);
   assert.match(operationsWorkspace, /Add patient coverage/);
-  assert.match(operationsWorkspace, /Additional coverage/);
+  assert.match(operationsWorkspace, /Add a policy/);
+  assert.doesNotMatch(operationsWorkspace, /responsibility-intro/);
   assert.match(operationsWorkspace, /Remaining balance destination/);
   assert.match(operationsWorkspace, /Hold patient statements until responsibility is finalized/);
   assert.match(operationsWorkspace, /Close responsibility period/);

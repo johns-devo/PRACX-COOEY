@@ -773,7 +773,8 @@ form legend {
   font-size: 20px;
 }
 
-.patient-editor-summary h3 {
+.patient-editor-summary .patient-editor-name {
+  display: block;
   margin: 5px 0 7px;
   color: #203a31;
   font-family: Georgia, serif;
@@ -1679,45 +1680,6 @@ form .patient-tab-panel {
 
 .responsibility-editor {
   background: #f8fbfa;
-}
-
-.responsibility-intro {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 22px 26px 18px;
-  border-bottom: 1px solid var(--soft-line);
-  background:
-    radial-gradient(circle at 90% 0%, rgba(152, 219, 194, 0.24), transparent 32%),
-    #fff;
-}
-
-.responsibility-intro h3 {
-  margin: 4px 0;
-  color: #31433c;
-  font-family: Georgia, serif;
-  font-size: 22px;
-  font-weight: 500;
-}
-
-.responsibility-intro p {
-  max-width: 620px;
-  margin: 0;
-  color: #77857f;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.responsibility-count {
-  flex: 0 0 auto;
-  padding: 8px 11px;
-  border: 1px solid #b7dacd;
-  border-radius: 999px;
-  background: #f0f9f5;
-  color: #27684f;
-  font-size: 11px;
-  font-weight: 800;
 }
 
 .responsibility-existing {
@@ -3972,7 +3934,6 @@ form .patient-tab-panel {
     flex-direction: column;
   }
 
-  .responsibility-intro,
   .responsibility-rule-note {
     align-items: flex-start;
     flex-direction: column;

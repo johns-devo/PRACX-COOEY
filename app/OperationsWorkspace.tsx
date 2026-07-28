@@ -1109,12 +1109,8 @@ function ResponsibilityForm({ data, form, update }: FormProps) {
   const existingProfiles = data.responsibilityProfiles.filter((profile) => value(profile, "patientId") === patientId);
 
   return <div className="responsibility-editor">
-    <section className="responsibility-intro">
-      <div><span className="eyebrow">DOS responsibility</span><h3>{String(form.patientName || "Patient")}</h3><p>Prefilled from the patient’s default insurance order. Change it for this date range and billing context without altering the policy master or existing claims.</p></div>
-      <span className="responsibility-count">{existingProfiles.length} existing profile{existingProfiles.length === 1 ? "" : "s"}</span>
-    </section>
     {existingProfiles.length > 0 && <div className="responsibility-existing">{existingProfiles.slice(0, 3).map((profile) => <article key={value(profile, "id")}><span>{value(profile, "billingContext").replaceAll("_", " ")}</span><strong>{value(profile, "profileName")}</strong><small>{shortDate(value(profile, "effectiveFrom"))} → {value(profile, "effectiveTo") ? shortDate(value(profile, "effectiveTo")) : "Open"}</small></article>)}</div>}
-    <fieldset><legend>Profile and date-of-service range</legend><div className="form-grid responsibility-profile-grid">
+    <fieldset><legend>Profile and date-of-service range</legend><p className="form-guidance">For {String(form.patientName || "this patient")}, change responsibility for this DOS range without altering the policy master or existing claims.</p><div className="form-grid responsibility-profile-grid">
       <Input label="Profile name" name="profileName" form={form} update={update} required placeholder="2026 routine medical" />
       <Select label="Billing context" name="billingContext" form={form} update={update} required options={[["routine", "Routine medical"], ["auto_pip", "Auto accident / PIP"], ["workers_comp", "Workers’ compensation"], ["liability", "Liability case"], ["lop_legal", "LOP / legal"], ["other", "Other"]]} />
       <Input label="Effective from" name="effectiveFrom" form={form} update={update} required type="date" />
@@ -1146,8 +1142,7 @@ function CoverageOrderForm({ data, form, update }: FormProps) {
     return [value(coverage, "id"), `${value(payer || {}, "name")} · ${value(plan || {}, "name")} · ${value(coverage, "memberId")}`];
   });
   return <div className="responsibility-editor coverage-editor">
-    <section className="responsibility-intro"><div><span className="eyebrow">Default coordination of benefits</span><h3>{String(form.patientName || "Patient")}</h3><p>Set the normal insurance sequence used when no DOS-specific profile applies. A policy may occupy only one position.</p></div><span className="responsibility-count">{activeCoverages.length} active</span></section>
-    <fieldset><legend>Primary, secondary and tertiary defaults</legend><div className="form-grid">
+    <fieldset><legend>Primary, secondary and tertiary defaults</legend><p className="form-guidance">Set the normal sequence for {String(form.patientName || "this patient")} when no DOS-specific profile applies. {activeCoverages.length} active coverage source{activeCoverages.length === 1 ? "" : "s"} available.</p><div className="form-grid">
       <Select label="Primary insurance" name="primaryCoverageId" form={form} update={update} options={options} />
       <Select label="Secondary insurance" name="secondaryCoverageId" form={form} update={update} options={options} />
       <Select label="Tertiary insurance" name="tertiaryCoverageId" form={form} update={update} options={options} />
@@ -1251,13 +1246,12 @@ function CoverageForm({ data, form, update }: FormProps) {
   }
   const existingCoverages = data.coverages.filter((coverage) => value(coverage, "patientId") === String(form.patientId || ""));
   return <div className="responsibility-editor coverage-editor">
-    <section className="responsibility-intro"><div><span className="eyebrow">Additional coverage</span><h3>{String(form.patientName || "Patient")}</h3><p>Add another policy without replacing existing coverage. The DOS responsibility profile determines the working claim order.</p></div><span className="responsibility-count">{existingCoverages.length} existing</span></section>
     {existingCoverages.length > 0 && <div className="responsibility-existing">{existingCoverages.map((coverage) => {
       const plan = data.plans.find((item) => value(item, "id") === value(coverage, "planId"));
       const payer = data.payers.find((item) => value(item, "id") === value(plan || {}, "payerId"));
       return <article key={value(coverage, "id")}><span>{value(coverage, "priority").replaceAll("_", " ")} default</span><strong>{value(payer || {}, "name")} · {value(plan || {}, "name")}</strong><small>{value(coverage, "memberId")} · {value(coverage, "status")}</small></article>;
     })}</div>}
-    <fieldset><legend>Coverage or responsibility type</legend><div className="form-grid"><CoverageTypeSelector form={form} update={update} /><ResponsibilityPositionField form={form} update={update} /></div></fieldset>
+    <fieldset><legend>Coverage or responsibility type</legend><p className="form-guidance">Add a policy for {String(form.patientName || "this patient")} without replacing the existing insurance history.</p><div className="form-grid"><CoverageTypeSelector form={form} update={update} /><ResponsibilityPositionField form={form} update={update} /></div></fieldset>
     {!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && <><fieldset><legend>Policy information</legend><div className="form-grid">
       <label className="field">Insurance plan <span><b>*</b><ClaimFieldHint hint={claimFieldHints.planName} /></span><select autoComplete="off" name="pracx-insurance-plan" required value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label>
       <Input label="Member ID" name="memberId" form={form} update={update} required hint="memberId" />
@@ -1280,9 +1274,8 @@ function EligibilityReviewForm({ review, form, update }: { review: DataRow | nul
   const returnedAddress = (details.returnedAddress || {}) as DataRow;
   const addressText = (address: DataRow) => `${value(address, "addressLine1")} ${value(address, "addressLine2")}, ${value(address, "city")}, ${value(address, "state")} ${value(address, "postalCode")}`.replace(/\s+/g, " ").replace(" ,", ",").trim();
   return <div className="eligibility-review">
-    <section className="responsibility-intro"><div><span className="eyebrow">Eligibility confirmation</span><h3>{value(details, "payerName")} · {value(details, "planName")}</h3><p>Review the 271 response before changing the patient master. Nothing is overwritten until you confirm.</p></div><Status value={value(review || {}, "status")} /></section>
     <div className="eligibility-benefit-summary"><span>Member <strong>{value(details, "memberId")}</strong></span><span>Group <strong>{value(details, "groupNumber") || "—"}</strong></span><span>Effective <strong>{shortDate(value(details, "effectiveDate"))}</strong></span><span>Termination <strong>{value(details, "terminationDate") ? shortDate(value(details, "terminationDate")) : "Open"}</strong></span><span>Copay <strong>{currency(value(details, "copayAmount"))}</strong></span></div>
-    <fieldset><legend>Patient address decision</legend><div className="address-choice-grid">
+    <fieldset><legend>Patient address decision</legend><p className="form-guidance">{value(details, "payerName")} · {value(details, "planName")} · {value(review || {}, "status")}. Nothing is overwritten until you confirm.</p><div className="address-choice-grid">
       <label className={form.addressChoice === "keep_current" ? "selected" : ""}><input checked={form.addressChoice === "keep_current"} name="address-review-choice" onChange={() => update("addressChoice", "keep_current")} type="radio" /><span><strong>Keep current patient address</strong><small>{addressText(currentAddress) || "No current address"}</small></span></label>
       <label className={form.addressChoice === "use_eligibility" ? "selected" : ""}><input checked={form.addressChoice === "use_eligibility"} name="address-review-choice" onChange={() => update("addressChoice", "use_eligibility")} type="radio" /><span><strong>Use address returned by eligibility</strong><small>{addressText(returnedAddress) || "No address returned"}</small></span></label>
     </div></fieldset>
@@ -1293,8 +1286,7 @@ function EligibilityReviewForm({ review, form, update }: { review: DataRow | nul
 
 function CloseResponsibilityForm({ form, update }: SimpleFormProps) {
   return <div className="responsibility-editor">
-    <section className="responsibility-intro"><div><span className="eyebrow">Close DOS range</span><h3>{String(form.profileName || "Responsibility profile")}</h3><p>{String(form.patientName || "Patient")} · Started {shortDate(String(form.effectiveFrom || ""))}. Existing claims keep the responsibility snapshot captured when they were created.</p></div></section>
-    <fieldset><legend>Closing information</legend><div className="form-grid">
+    <fieldset><legend>Closing information</legend><p className="form-guidance">{String(form.patientName || "Patient")} · {String(form.profileName || "Responsibility profile")} · Started {shortDate(String(form.effectiveFrom || ""))}. Existing claims keep their saved responsibility snapshot.</p><div className="form-grid">
       <Input label="Effective through" name="effectiveTo" form={form} update={update} required type="date" />
       <Input label="Reason for closing or reordering" name="reason" form={form} update={update} required placeholder="Coverage ended, COB changed, PIP exhausted…" />
     </div></fieldset>
@@ -1325,8 +1317,7 @@ function PatientDocumentsForm({ data, form, update }: FormProps) {
   });
 
   return <div className="patient-document-uploader">
-    <section className="responsibility-intro"><div><span className="eyebrow">Secure patient documents</span><h3>{String(form.patientName || "Patient")}</h3><p>On a tablet or phone, tap a card side to open the rear camera. On desktop, the same control opens the file picker.</p></div><span className="responsibility-count">JPG, PNG, WebP or PDF · 12 MB max</span></section>
-    <fieldset><legend>Document details</legend><div className="form-grid">
+    <fieldset><legend>Document details</legend><p className="form-guidance">{String(form.patientName || "Patient")} · Take a photo on mobile or upload JPG, PNG, WebP or PDF on desktop. Maximum 12 MB.</p><div className="form-grid">
       <Select label="Document type" name="category" form={form} update={update} required options={Object.entries(DOCUMENT_CATEGORY_LABELS)} />
       <Select label={insuranceCard ? "Insurance policy" : "Related insurance policy (optional)"} name="coverageId" form={form} update={update} required={insuranceCard} options={coverageOptions} />
       <Input label="Document title" name="title" form={form} update={update} placeholder={insuranceCard ? "2026 Aetna member card" : "Descriptive document title"} />
@@ -1403,7 +1394,7 @@ function PatientForm({ data, form, update }: FormProps) {
       <aside className="patient-editor-summary">
         <span className="patient-editor-avatar">{initials}</span>
         <span className="eyebrow">Patient record</span>
-        <h3>{form.firstName || form.lastName ? `${String(form.firstName || "")} ${String(form.lastName || "")}` : "New patient"}</h3>
+        <strong className="patient-editor-name">{form.firstName || form.lastName ? `${String(form.firstName || "")} ${String(form.lastName || "")}` : "New patient record"}</strong>
         <p>{form.memberId ? `Member ${String(form.memberId)}` : "Complete the sections to create a claim-ready patient master."}</p>
         <div className="patient-editor-progress">
           {tabs.map((tab) => <div className={tab.complete ? "complete" : ""} key={tab.id}><span>{tab.complete ? "✓" : tab.number}</span><div><strong>{tab.label}</strong><small>{tab.complete ? "Information ready" : "Needs information"}</small></div></div>)}
@@ -1464,8 +1455,7 @@ function AppointmentForm({ data, form, update, onAddPatient, reschedule = false 
   const latestEligibility = selectedPatient ? data.eligibility.find((item) => value(item, "patientId") === value(selectedPatient, "id")) : undefined;
   const upcomingVisits = selectedPatient ? data.appointments.filter((appointment) => value(appointment, "patientId") === value(selectedPatient, "id") && new Date(value(appointment, "startAt")) >= new Date() && !["cancelled", "no_show"].includes(value(appointment, "status"))).length : 0;
   return <div className="appointment-editor">
-    <section className="responsibility-intro"><div><span className="eyebrow">{reschedule ? "Change appointment time" : "Schedule a visit"}</span><h3>{reschedule ? String(form.patientName || "Patient") : "New patient appointment"}</h3><p>{reschedule ? "The original appointment remains the same record. Saving resets it to scheduled for front-desk confirmation." : "Select the patient, visit type, provider and location. Provider conflicts are checked before saving."}</p></div></section>
-    <fieldset><legend>Patient and visit</legend><div className="form-grid">
+    <fieldset><legend>Patient and visit</legend><p className="form-guidance">{reschedule ? `Change the appointment time for ${String(form.patientName || "this patient")}. Saving returns it to scheduled for confirmation.` : "Select the patient, visit type, provider and location. Provider conflicts are checked before saving."}</p><div className="form-grid">
       {reschedule ? <label className="field">Patient <span /><input disabled value={String(form.patientName || "")} /></label> : <div className="appointment-patient-picker"><Select label="Find existing patient" name="patientId" form={form} update={update} required options={data.patients.map((row) => [value(row, "id"), `${value(row, "firstName")} ${value(row, "lastName")} · DOB ${shortDate(value(row, "dateOfBirth"))} · ${value(row, "accountNumber")}`])} /><button className="appointment-add-patient" onClick={onAddPatient} type="button"><span>＋</span><strong>Patient not found?</strong><small>Create their chart and return to this appointment</small></button></div>}
       <Select label="Appointment type" name="appointmentType" form={form} update={update} required options={[["New patient visit", "New patient visit"], ["Office visit", "Office visit"], ["Follow-up", "Follow-up"], ["Annual wellness", "Annual wellness"], ["Procedure", "Procedure"], ["Physical therapy", "Physical therapy"], ["Telehealth", "Telehealth"], ["Consultation", "Consultation"]]} />
       <Select label="Billing context" name="billingContext" form={form} update={update} required options={[["routine", "Routine medical"], ["auto_pip", "Auto accident / PIP"], ["workers_comp", "Workers’ compensation"], ["liability", "Liability case"], ["lop_legal", "LOP / legal"], ["other", "Other"]]} />
