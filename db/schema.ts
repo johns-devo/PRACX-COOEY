@@ -322,6 +322,32 @@ export const patientCoverages = sqliteTable(
   ],
 );
 
+export const patientDocuments = sqliteTable(
+  "patient_documents",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id),
+    patientId: text("patient_id").notNull().references(() => patients.id),
+    coverageId: text("coverage_id").references(() => patientCoverages.id),
+    claimId: text("claim_id"),
+    category: text("category").notNull(),
+    documentSide: text("document_side").notNull().default("none"),
+    title: text("title").notNull(),
+    originalFileName: text("original_file_name").notNull(),
+    objectKey: text("object_key").notNull(),
+    contentType: text("content_type").notNull(),
+    fileSize: text("file_size").notNull(),
+    serviceDate: text("service_date"),
+    status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
+    uploadedBy: text("uploaded_by").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("patient_documents_patient_idx").on(table.patientId, table.createdAt),
+    index("patient_documents_coverage_idx").on(table.coverageId),
+  ],
+);
+
 export const patientLegalResponsibilities = sqliteTable(
   "patient_legal_responsibilities",
   {

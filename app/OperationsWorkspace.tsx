@@ -48,6 +48,7 @@ type WorkspaceData = {
   claimConfigurationValues: DataRow[];
   eligibilityUpdateHistory: DataRow[];
   legalResponsibilities: DataRow[];
+  patientDocuments: DataRow[];
   error?: string;
 };
 
@@ -228,6 +229,22 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     setModalOpen(true);
   }
 
+  function openDocuments(patientId: string, coverageId = "") {
+    const patient = data?.patients.find((item) => value(item, "id") === patientId);
+    setFormMode("documents");
+    setForm({
+      patientId,
+      patientName: patient ? `${value(patient, "firstName")} ${value(patient, "lastName")}` : "Patient",
+      coverageId,
+      category: coverageId ? "insurance_card" : "medical_record",
+      title: "",
+      serviceDate: "",
+    });
+    setError("");
+    setNotice("");
+    setModalOpen(true);
+  }
+
   async function action(actionName: string, payload: Record<string, unknown> = {}) {
     setSaving(true);
     setError("");
@@ -251,6 +268,29 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
 
   async function submitForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (module === "patients" && formMode === "documents") {
+      const upload = new FormData(event.currentTarget);
+      upload.set("patientId", String(form.patientId || ""));
+      upload.set("coverageId", String(form.coverageId || ""));
+      upload.set("category", String(form.category || ""));
+      upload.set("title", String(form.title || ""));
+      upload.set("serviceDate", String(form.serviceDate || ""));
+      setSaving(true);
+      setError("");
+      try {
+        const response = await fetch("/api/patient-documents", { method: "POST", body: upload });
+        const body = (await response.json()) as Record<string, unknown>;
+        if (!response.ok) throw new Error(String(body.error || "Unable to upload patient document."));
+        await loadData();
+        setModalOpen(false);
+        setNotice(`${String(body.count || 1)} patient document${Number(body.count || 1) === 1 ? "" : "s"} saved securely.`);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Unable to upload patient document.");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     const submitter = (event.nativeEvent as SubmitEvent).submitter;
     const submitIntent = submitter instanceof HTMLButtonElement ? submitter.value : "";
     const submittedMode = formMode;
@@ -549,7 +589,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
                     return <tr className={selectedPatientId === value(patient, "id") ? "selected-patient-row" : ""} key={value(patient, "id")}><td><button className="patient-select-button" onClick={() => setSelectedPatientId(value(patient, "id"))} type="button"><PersonCell row={patient} /></button></td><td className="mono">{value(patient, "accountNumber")}</td><td>{shortDate(value(patient, "dateOfBirth"))}</td><td><Status value={value(latestEligibility || {}, "status") || "not checked"} /></td><td><Status value={value(patient, "status")} /></td><td><div className="row-actions"><button onClick={() => editPatient(patient, coverage)} type="button">Edit</button><button disabled={!coverage || isSaving} onClick={() => verifyPatientEligibility(value(patient, "id"))} type="button">Check eligibility</button></div></td></tr>;
                   })}</tbody></table>
               </TablePanel>
-              <SelectedPatientInsurance data={data} patientId={selectedPatientId} isSaving={isSaving} onCheck={verifyPatientEligibility} />
+              <SelectedPatientInsurance data={data} patientId={selectedPatientId} isSaving={isSaving} onCheck={verifyPatientEligibility} onDocuments={openDocuments} onEdit={editPatient} />
             </>
           )}
 
@@ -687,7 +727,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
           <section aria-labelledby="operations-modal-title" aria-modal="true" className={`modal provider-modal ${module === "patients" ? "patient-modal" : ""}`} role="dialog">
             <div className="modal-header"><div><span className="eyebrow">{meta.eyebrow}</span><h2 id="operations-modal-title">{modalTitle(module, formMode)}</h2><p>Required fields are marked. Claim-related fields include CMS-1500 guidance.</p></div><button aria-label="Close dialog" className="close-button" onClick={() => setModalOpen(false)} type="button">×</button></div>
             <form onSubmit={submitForm}>
-              {module === "patients" && (formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm data={data} form={form} update={updateField} />)}
+              {module === "patients" && (formMode === "documents" ? <PatientDocumentsForm data={data} form={form} update={updateField} /> : formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm data={data} form={form} update={updateField} />)}
               {module === "scheduler" && <AppointmentForm data={data} form={form} update={updateField} />}
               {module === "eligibility" && <EligibilityForm data={data} form={form} update={updateField} />}
               {module === "clinical" && <EncounterForm data={data} form={form} update={updateField} />}
@@ -698,7 +738,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
               {module === "procedures" && <ProcedureForm form={form} update={updateField} />}
               {module === "integrations" && <IntegrationForm form={form} update={updateField} />}
               {error && <div className="notice error form-error">{error}</div>}
-              <div className="modal-footer"><button className="secondary-button" onClick={() => setModalOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{isSaving ? "Saving…" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button></div>
+              <div className="modal-footer"><button className="secondary-button" onClick={() => setModalOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{isSaving ? (formMode === "documents" ? "Uploading…" : "Saving…") : formMode === "documents" ? "Upload documents" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button></div>
             </form>
           </section>
         </div>
@@ -715,24 +755,51 @@ function TablePanel({ title, description, search, setSearch, children }: { title
   return <section className="table-card operations-table"><div className="table-header"><div><h2>{title}</h2><p>{description}</p></div>{setSearch && <label className="search-field"><span aria-hidden="true">⌕</span><input aria-label={`Search ${title}`} onChange={(event) => setSearch(event.target.value)} placeholder="Search records" value={search} /></label>}</div><div className="table-wrap">{children}</div></section>;
 }
 
-function SelectedPatientInsurance({ data, patientId, isSaving, onCheck }: { data: WorkspaceData; patientId: string; isSaving: boolean; onCheck: (patientId: string, coverageId?: string) => void }) {
+const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
+  insurance_card: "Insurance card",
+  hcfa_form: "HCFA / CMS-1500",
+  medical_record: "Medical record",
+  accident_letter: "Accident letter",
+  primary_eob: "Primary EOB",
+  secondary_eob: "Secondary EOB",
+  referral: "Referral",
+  authorization: "Authorization",
+  lab_result: "Lab result",
+  other: "Other document",
+};
+
+function coveragePeriodState(coverage: DataRow) {
+  const today = new Date().toISOString().slice(0, 10);
+  const effective = value(coverage, "effectiveDate");
+  const termination = value(coverage, "terminationDate");
+  if (value(coverage, "status") === "inactive" || (termination && termination < today)) return "history";
+  if (effective && effective > today) return "future";
+  return "current";
+}
+
+function SelectedPatientInsurance({ data, patientId, isSaving, onCheck, onDocuments, onEdit }: { data: WorkspaceData; patientId: string; isSaving: boolean; onCheck: (patientId: string, coverageId?: string) => void; onDocuments: (patientId: string, coverageId?: string) => void; onEdit: (patient: DataRow, coverage?: DataRow) => void }) {
   const patient = data.patients.find((item) => value(item, "id") === patientId);
   if (!patient) return <section className="selected-insurance-panel empty"><strong>Select a patient</strong><span>Click a patient name to view insurance policies and coverage details.</span></section>;
   const rank: Record<string, number> = { primary: 1, secondary: 2, tertiary: 3, guarantor: 4, final_balance: 5, unassigned: 6 };
+  const periodRank: Record<string, number> = { current: 1, future: 2, history: 3 };
   const coverages = data.coverages
     .filter((item) => value(item, "patientId") === patientId)
-    .sort((left, right) => (rank[value(left, "priority")] || 4) - (rank[value(right, "priority")] || 4));
+    .sort((left, right) => (periodRank[coveragePeriodState(left)] - periodRank[coveragePeriodState(right)]) || ((rank[value(left, "priority")] || 6) - (rank[value(right, "priority")] || 6)));
   const legalResponsibilities = data.legalResponsibilities.filter((item) => value(item, "patientId") === patientId);
   const history = data.eligibilityUpdateHistory.filter((item) => value(item, "patientId") === patientId).slice(0, 4);
+  const documents = data.patientDocuments.filter((item) => value(item, "patientId") === patientId && value(item, "status") === "active");
   return <section className="selected-insurance-panel">
-    <header><div><span className="eyebrow">Coverage & responsibility</span><h2>{value(patient, "firstName")} {value(patient, "lastName")}</h2><p>{coverages.length} insurance polic{coverages.length === 1 ? "y" : "ies"} · {legalResponsibilities.length} legal or balance source{legalResponsibilities.length === 1 ? "" : "s"}</p></div><span className="mono">{value(patient, "accountNumber")}</span></header>
+    <header><div><span className="eyebrow">Coverage, history & documents</span><h2>{value(patient, "firstName")} {value(patient, "lastName")}</h2><p>{coverages.filter((coverage) => coveragePeriodState(coverage) === "current").length} current · {coverages.filter((coverage) => coveragePeriodState(coverage) === "future").length} future · {coverages.filter((coverage) => coveragePeriodState(coverage) === "history").length} historical · {documents.length} documents</p></div><div className="selected-patient-actions"><span className="mono">{value(patient, "accountNumber")}</span><button className="secondary-button" onClick={() => onDocuments(patientId)} type="button">＋ Add document</button></div></header>
     {coverages.length ? <div className="coverage-detail-grid">{coverages.map((coverage) => {
       const plan = data.plans.find((item) => value(item, "id") === value(coverage, "planId"));
       const payer = data.payers.find((item) => value(item, "id") === value(plan || {}, "payerId"));
       const latest = data.eligibility.find((item) => value(item, "coverageId") === value(coverage, "id"));
-      return <article key={value(coverage, "id")}><div className="coverage-detail-heading"><span>{value(coverage, "priority")}</span><Status value={value(latest || {}, "status") || "not checked"} /></div><h3>{value(payer || {}, "name")} · {value(plan || {}, "name")}</h3><small className="coverage-kind">{(value(coverage, "coverageType") || "health").replaceAll("_", " ")}</small><dl><div><dt>Member ID</dt><dd>{value(coverage, "memberId")}</dd></div><div><dt>Group</dt><dd>{value(coverage, "groupNumber") || "—"}</dd></div><div><dt>Effective</dt><dd>{shortDate(value(coverage, "effectiveDate"))}</dd></div><div><dt>Terminates</dt><dd>{value(coverage, "terminationDate") ? shortDate(value(coverage, "terminationDate")) : "Open"}</dd></div><div><dt>Subscriber</dt><dd>{value(coverage, "subscriberFirstName")} {value(coverage, "subscriberLastName")}</dd></div><div><dt>Relationship</dt><dd>{value(coverage, "relationship")}</dd></div>{["auto_pip", "workers_comp", "liability"].includes(value(coverage, "coverageType")) && <><div><dt>Claim number</dt><dd>{value(coverage, "propertyCasualtyClaimNumber") || "—"}</dd></div><div><dt>Accident date</dt><dd>{shortDate(value(coverage, "accidentDate"))}</dd></div><div><dt>Coverage remaining</dt><dd>{value(coverage, "coverageLimit") ? currency(Number(value(coverage, "coverageLimit")) - Number(value(coverage, "amountUsed"))) : "Not limited"}</dd></div><div><dt>Adjuster</dt><dd>{value(coverage, "adjusterName") || "—"}</dd></div></>}</dl>{latest && <small>Last checked {shortDate(value(latest, "checkedAt"), true)} · {value(latest, "referenceNumber")}</small>}<button className="coverage-check-button" disabled={isSaving} onClick={() => onCheck(patientId, value(coverage, "id"))} type="button">Check this policy’s eligibility</button></article>;
+      const coverageDocuments = documents.filter((item) => value(item, "coverageId") === value(coverage, "id"));
+      const periodState = coveragePeriodState(coverage);
+      return <article className={`coverage-period-${periodState}`} key={value(coverage, "id")}><div className="coverage-detail-heading"><span>{value(coverage, "priority")} · {periodState}</span><Status value={value(latest || {}, "status") || "not checked"} /></div><h3>{value(payer || {}, "name")} · {value(plan || {}, "name")}</h3><small className="coverage-kind">{(value(coverage, "coverageType") || "health").replaceAll("_", " ")}</small><dl><div><dt>Member ID</dt><dd>{value(coverage, "memberId")}</dd></div><div><dt>Group</dt><dd>{value(coverage, "groupNumber") || "—"}</dd></div><div><dt>Effective</dt><dd>{shortDate(value(coverage, "effectiveDate"))}</dd></div><div><dt>Terminates</dt><dd>{value(coverage, "terminationDate") ? shortDate(value(coverage, "terminationDate")) : "Open"}</dd></div><div><dt>Subscriber</dt><dd>{value(coverage, "subscriberFirstName")} {value(coverage, "subscriberLastName")}</dd></div><div><dt>Card images</dt><dd>{coverageDocuments.filter((item) => value(item, "category") === "insurance_card").length}/2 saved</dd></div>{["auto_pip", "workers_comp", "liability"].includes(value(coverage, "coverageType")) && <><div><dt>Claim number</dt><dd>{value(coverage, "propertyCasualtyClaimNumber") || "—"}</dd></div><div><dt>Accident date</dt><dd>{shortDate(value(coverage, "accidentDate"))}</dd></div><div><dt>Coverage remaining</dt><dd>{value(coverage, "coverageLimit") ? currency(Number(value(coverage, "coverageLimit")) - Number(value(coverage, "amountUsed"))) : "Not limited"}</dd></div><div><dt>Adjuster</dt><dd>{value(coverage, "adjusterName") || "—"}</dd></div></>}</dl>{latest && <small>Last checked {shortDate(value(latest, "checkedAt"), true)} · {value(latest, "referenceNumber")}</small>}<div className="coverage-card-actions"><button onClick={() => onEdit(patient, coverage)} type="button">Edit / end policy</button><button onClick={() => onDocuments(patientId, value(coverage, "id"))} type="button">Add card images</button>{periodState === "current" && <button disabled={isSaving} onClick={() => onCheck(patientId, value(coverage, "id"))} type="button">Check this policy’s eligibility</button>}</div></article>;
     })}</div> : <p className="no-coverage-message">No insurance policy is recorded for this patient.</p>}
     {legalResponsibilities.length > 0 && <div className="coverage-detail-grid legal-responsibility-grid">{legalResponsibilities.map((record) => <article key={value(record, "id")}><div className="coverage-detail-heading"><span>{value(record, "balanceRole").replaceAll("_", " ")}</span><Status value={value(record, "status")} /></div><h3>{value(record, "responsibilityType").replaceAll("_", " ").toUpperCase()} · {value(record, "organizationName") || "Patient responsibility"}</h3><small className="coverage-kind">Legal / non-insurance responsibility</small><dl><div><dt>Attorney</dt><dd>{value(record, "attorneyName") || "—"}</dd></div><div><dt>Case</dt><dd>{value(record, "caseNumber") || "—"}</dd></div><div><dt>LOP number</dt><dd>{value(record, "lopNumber") || "—"}</dd></div><div><dt>Signed</dt><dd>{shortDate(value(record, "signedDate"))}</dd></div><div><dt>Authorized</dt><dd>{value(record, "authorizedAmount") ? currency(value(record, "authorizedAmount")) : "—"}</dd></div><div><dt>Settlement</dt><dd>{value(record, "settlementStatus").replaceAll("_", " ")}</dd></div></dl><small>Not transmitted as an 837P insurance payer</small></article>)}</div>}
+    <div className="patient-document-library"><div className="patient-document-heading"><div><span className="eyebrow">Patient documents</span><h3>Documents attached to this patient</h3></div><button onClick={() => onDocuments(patientId)} type="button">＋ Upload</button></div>{documents.length ? <div className="patient-document-grid">{documents.map((document) => <a href={`/api/patient-documents?id=${encodeURIComponent(value(document, "id"))}`} key={value(document, "id")} rel="noreferrer" target="_blank"><span>{value(document, "contentType") === "application/pdf" ? "PDF" : value(document, "documentSide") === "front" ? "FRONT" : value(document, "documentSide") === "back" ? "BACK" : "FILE"}</span><strong>{value(document, "title")}</strong><small>{DOCUMENT_CATEGORY_LABELS[value(document, "category")] || value(document, "category").replaceAll("_", " ")} · {shortDate(value(document, "createdAt"))}</small></a>)}</div> : <p>No documents have been uploaded for this patient.</p>}</div>
     {history.length > 0 && <div className="eligibility-audit"><strong>Recent eligibility-applied changes</strong>{history.map((item) => <span key={value(item, "id")}>{shortDate(value(item, "createdAt"), true)} · {value(item, "reason")} · {value(item, "changedBy")}</span>)}</div>}
   </section>;
 }
@@ -1022,6 +1089,44 @@ function CloseResponsibilityForm({ form, update }: SimpleFormProps) {
   </div>;
 }
 
+function CoverageHistoryStrip({ data, patientId }: { data: WorkspaceData; patientId: string }) {
+  if (!patientId) return null;
+  const coverages = data.coverages.filter((coverage) => value(coverage, "patientId") === patientId);
+  if (!coverages.length) return <div className="existing-coverage-strip empty"><strong>No existing insurance history</strong><span>This will be the patient’s first coverage episode.</span></div>;
+  return <section className="existing-coverage-strip"><div><strong>Existing insurance and history</strong><span>Policies remain attached to their effective dates. Use Edit / end policy from the patient panel to work on a different record.</span></div><div className="existing-coverage-cards">{coverages.map((coverage) => {
+    const plan = data.plans.find((item) => value(item, "id") === value(coverage, "planId"));
+    const payer = data.payers.find((item) => value(item, "id") === value(plan || {}, "payerId"));
+    return <article key={value(coverage, "id")}><span>{coveragePeriodState(coverage)} · {value(coverage, "priority")}</span><strong>{value(payer || {}, "name")} · {value(plan || {}, "name")}</strong><small>{value(coverage, "memberId")} · {shortDate(value(coverage, "effectiveDate"))} → {value(coverage, "terminationDate") ? shortDate(value(coverage, "terminationDate")) : "Open"}</small></article>;
+  })}</div></section>;
+}
+
+function PatientDocumentsForm({ data, form, update }: FormProps) {
+  const patientId = String(form.patientId || "");
+  const category = String(form.category || "medical_record");
+  const coverages = data.coverages.filter((coverage) => value(coverage, "patientId") === patientId);
+  const insuranceCard = category === "insurance_card";
+  const coverageOptions = coverages.map((coverage) => {
+    const plan = data.plans.find((item) => value(item, "id") === value(coverage, "planId"));
+    const payer = data.payers.find((item) => value(item, "id") === value(plan || {}, "payerId"));
+    return [value(coverage, "id"), `${coveragePeriodState(coverage)} · ${value(coverage, "priority")} · ${value(payer || {}, "name")} · ${value(plan || {}, "name")} · ${value(coverage, "memberId")}`] as [string, string];
+  });
+
+  return <div className="patient-document-uploader">
+    <section className="responsibility-intro"><div><span className="eyebrow">Secure patient documents</span><h3>{String(form.patientName || "Patient")}</h3><p>On a tablet or phone, tap a card side to open the rear camera. On desktop, the same control opens the file picker.</p></div><span className="responsibility-count">JPG, PNG, WebP or PDF · 12 MB max</span></section>
+    <fieldset><legend>Document details</legend><div className="form-grid">
+      <Select label="Document type" name="category" form={form} update={update} required options={Object.entries(DOCUMENT_CATEGORY_LABELS)} />
+      <Select label={insuranceCard ? "Insurance policy" : "Related insurance policy (optional)"} name="coverageId" form={form} update={update} required={insuranceCard} options={coverageOptions} />
+      <Input label="Document title" name="title" form={form} update={update} placeholder={insuranceCard ? "2026 Aetna member card" : "Descriptive document title"} />
+      <Input label="Document / service date" name="serviceDate" form={form} update={update} type="date" />
+    </div></fieldset>
+    {insuranceCard ? <fieldset><legend>Insurance member ID card</legend><p className="form-guidance">Capture or upload the front and back together. Each side is stored separately but linked to this exact coverage episode.</p><div className="document-capture-grid">
+      <label><span>Front of card</span><strong>Take photo or upload front</strong><small>Place the full card inside the frame with all text readable.</small><input accept="image/jpeg,image/png,image/webp,application/pdf" capture="environment" name="front" type="file" /></label>
+      <label><span>Back of card</span><strong>Take photo or upload back</strong><small>Include payer addresses, phone numbers and electronic IDs.</small><input accept="image/jpeg,image/png,image/webp,application/pdf" capture="environment" name="back" type="file" /></label>
+    </div></fieldset> : <fieldset><legend>Choose document</legend><label className="document-file-drop"><span>Upload {DOCUMENT_CATEGORY_LABELS[category] || "patient document"}</span><strong>Take a photo or choose a file</strong><small>The file will be available under Patient Documents after upload.</small><input accept="image/jpeg,image/png,image/webp,application/pdf" capture="environment" name="document" required type="file" /></label></fieldset>}
+    <div className="responsibility-rule-note"><strong>Patient record linkage</strong><span>Insurance cards appear on both the selected policy and the patient document library. Other files remain searchable under the patient and their selected category.</span></div>
+  </div>;
+}
+
 function PatientForm({ data, form, update }: FormProps) {
   const [activeTab, setActiveTab] = useState<"demographics" | "contact" | "insurance" | "subscriber">("demographics");
   const [addressStatus, setAddressStatus] = useState<"idle" | "checking" | "verified" | "corrected" | "error">("idle");
@@ -1124,7 +1229,7 @@ function PatientForm({ data, form, update }: FormProps) {
           </div>}
         </fieldset>}
 
-        {activeTab === "insurance" && <fieldset className="patient-tab-panel"><legend>Coverage & responsibility</legend><p className="patient-section-copy">Choose the responsibility type and billing position independently. Every type can be primary, secondary, tertiary, guarantor, final balance or controlled by a DOS profile.</p><div className="patient-insurance-grid"><CoverageTypeSelector form={form} update={update} /><ResponsibilityPositionField form={form} update={update} /></div>{!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && <><div className="patient-insurance-grid"><label className="field">Insurance plan <span><ClaimFieldHint hint={claimFieldHints.planName} /></span><select autoComplete="off" name="pracx-insurance-plan" value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label><Input label="Member ID" name="memberId" form={form} update={update} hint="memberId" /><Input label="Group number" name="groupNumber" form={form} update={update} hint="groupNumber" /><Select label="Relationship" name="relationship" form={form} update={update} hint="relationship" options={[["self", "Self"], ["spouse", "Spouse"], ["child", "Child"], ["other", "Other"]]} /><Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" /><Input label="Termination date" name="terminationDate" form={form} update={update} type="date" /></div><div className="patient-policy-options"><Check label="Accept assignment" name="acceptAssignment" form={form} update={update} hint="acceptAssignment" /><Check label="Release information" name="releaseOfInformation" form={form} update={update} hint="releaseInformation" /><Check label="Assignment of benefits" name="assignmentOfBenefits" form={form} update={update} hint="assignmentBenefits" /></div><CoverageTypeFields form={form} update={update} /></>}{["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && <CoverageTypeFields form={form} update={update} />}<div className="insurance-save-actions"><div><strong>Add another coverage source</strong><span>Save this patient and current record, then continue with another policy or legal responsibility.</span></div><button disabled={!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && (!form.planId || !form.memberId)} name="submitIntent" type="submit" value="add-coverage">Save & add another →</button></div></fieldset>}
+        {activeTab === "insurance" && <fieldset className="patient-tab-panel"><legend>Coverage & responsibility</legend><CoverageHistoryStrip data={data} patientId={String(form.id || "")} /><p className="patient-section-copy">Choose the responsibility type and billing position independently. Every type can be primary, secondary, tertiary, guarantor, final balance or controlled by a DOS profile.</p><div className="patient-insurance-grid"><CoverageTypeSelector form={form} update={update} /><ResponsibilityPositionField form={form} update={update} /></div>{!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && <><div className="patient-insurance-grid"><label className="field">Insurance plan <span><ClaimFieldHint hint={claimFieldHints.planName} /></span><select autoComplete="off" name="pracx-insurance-plan" value={String(form.planId || "")} onChange={(event) => updatePlan(event.target.value)}><option value="">Select</option>{data.plans.map((row) => <option key={value(row, "id")} value={value(row, "id")}>{value(row, "name")}</option>)}</select></label><Input label="Member ID" name="memberId" form={form} update={update} hint="memberId" /><Input label="Group number" name="groupNumber" form={form} update={update} hint="groupNumber" /><Select label="Relationship" name="relationship" form={form} update={update} hint="relationship" options={[["self", "Self"], ["spouse", "Spouse"], ["child", "Child"], ["other", "Other"]]} /><Input label="Effective date" name="effectiveDate" form={form} update={update} type="date" /><Input label="Termination date" name="terminationDate" form={form} update={update} type="date" /></div><div className="patient-policy-options"><Check label="Accept assignment" name="acceptAssignment" form={form} update={update} hint="acceptAssignment" /><Check label="Release information" name="releaseOfInformation" form={form} update={update} hint="releaseInformation" /><Check label="Assignment of benefits" name="assignmentOfBenefits" form={form} update={update} hint="assignmentBenefits" /></div><CoverageTypeFields form={form} update={update} /></>}{["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && <CoverageTypeFields form={form} update={update} />}<div className="insurance-save-actions"><div><strong>Add another coverage source</strong><span>Save this patient and current record, then continue with another policy or legal responsibility.</span></div><button disabled={!["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) && (!form.planId || !form.memberId)} name="submitIntent" type="submit" value="add-coverage">Save & add another →</button></div></fieldset>}
 
         {activeTab === "subscriber" && <fieldset className="patient-tab-panel"><legend>Subscriber & verification</legend>{["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) ? <p className="patient-section-copy">This responsibility type does not create an insurance subscriber or eligibility inquiry.</p> : <><p className="patient-section-copy">Confirm whether the patient is the policy subscriber. Manual subscriber fields appear only when they are different.</p><SubscriberFields form={form} update={update} /><div className="eligibility-option"><Check label="Verify eligibility immediately after saving" name="verifyEligibility" form={form} update={update} /><p>PRACX sends a 270 inquiry and fills the returned payer, plan, coverage dates and benefit details. Live responses require an active eligibility adapter.</p></div></>}</fieldset>}
 
@@ -1268,6 +1373,7 @@ function IntegrationForm({ form, update }: SimpleFormProps) {
 }
 
 function modalTitle(module: OperationsModule, mode: string) {
+  if (module === "patients" && mode === "documents") return "Patient documents";
   if (module === "patients" && mode === "eligibility-review") return "Review eligibility updates";
   if (module === "patients" && mode === "responsibility") return "Add DOS responsibility profile";
   if (module === "patients" && mode === "close-responsibility") return "Close responsibility period";

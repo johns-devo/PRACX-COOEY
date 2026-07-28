@@ -271,6 +271,27 @@ export async function ensureCoreSchema() {
       updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
       FOREIGN KEY (patient_id) REFERENCES patients(id)
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS patient_documents (
+      id text PRIMARY KEY NOT NULL,
+      organization_id text NOT NULL,
+      patient_id text NOT NULL,
+      coverage_id text,
+      claim_id text,
+      category text NOT NULL,
+      document_side text DEFAULT 'none' NOT NULL,
+      title text NOT NULL,
+      original_file_name text NOT NULL,
+      object_key text NOT NULL,
+      content_type text NOT NULL,
+      file_size text NOT NULL,
+      service_date text,
+      status text DEFAULT 'active' NOT NULL,
+      uploaded_by text NOT NULL,
+      created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id),
+      FOREIGN KEY (patient_id) REFERENCES patients(id),
+      FOREIGN KEY (coverage_id) REFERENCES patient_coverages(id)
+    )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS billing_responsibility_profiles (
       id text PRIMARY KEY NOT NULL,
       patient_id text NOT NULL,
@@ -694,6 +715,8 @@ export async function ensureCoreSchema() {
     db.prepare("CREATE INDEX IF NOT EXISTS responsibility_source_profile_idx ON responsibility_sources (profile_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS responsibility_history_profile_idx ON responsibility_profile_history (profile_id)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS claim_responsibility_snapshot_unique ON claim_responsibility_snapshots (claim_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS patient_documents_patient_idx ON patient_documents (patient_id, created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS patient_documents_coverage_idx ON patient_documents (coverage_id)"),
   ]);
 
   try {

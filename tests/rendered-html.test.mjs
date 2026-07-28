@@ -34,6 +34,31 @@ test("upgrades legacy coverage and eligibility tables before saving new fields",
   );
 });
 
+test("stores patient and insurance-card documents with durable metadata", async () => {
+  const [workspace, documentApi, schema, migration, hosting] = await Promise.all([
+    readFile(new URL("../app/OperationsWorkspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/patient-documents/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0013_next_wolverine.sql", import.meta.url), "utf8"),
+    readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(workspace, /Patient documents/);
+  assert.match(workspace, /Front of card/);
+  assert.match(workspace, /Back of card/);
+  assert.match(workspace, /capture="environment"/);
+  assert.match(workspace, /HCFA \/ CMS-1500/);
+  assert.match(workspace, /Primary EOB/);
+  assert.match(workspace, /Existing insurance and history/);
+  assert.match(workspace, /Edit \/ end policy/);
+  assert.match(documentApi, /MAX_FILE_SIZE = 12 \* 1024 \* 1024/);
+  assert.match(documentApi, /patientDocuments/);
+  assert.match(documentApi, /Cache-Control": "private, no-store"/);
+  assert.match(schema, /export const patientDocuments/);
+  assert.match(migration, /CREATE TABLE `patient_documents`/);
+  assert.match(hosting, /"r2": "DOCUMENTS"/);
+});
+
 test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local authentication", async () => {
   const [workspace, providerWorkspace, operationsWorkspace, operationsApi, claimHint, cms1500, providerApi, referringApi, dashboard, login, auth, onboarding, layout, schema, migration, providerMigration, operationsMigration, responsibilityMigration, cmsQualifierMigration, box19Migration, responsibilityStatusMigration, currentClaimMigration, claimConfigWorkspace, claimConfigApi, claimConfigDefaults, claimConfigPage, claimConfigMigration, eligibilityUpdateMigration, coverageResponsibilityMigration] = await Promise.all([
     readFile(new URL("../app/FacilityWorkspace.tsx", import.meta.url), "utf8"),

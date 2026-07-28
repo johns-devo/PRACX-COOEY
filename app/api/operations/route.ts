@@ -17,6 +17,7 @@ import {
   integrations,
   ledgerTransactions,
   patientCoverages,
+  patientDocuments,
   patientLegalResponsibilities,
   patients,
   payers,
@@ -374,6 +375,7 @@ async function loadWorkspace() {
     claimConfigurationRows,
     eligibilityUpdateRows,
     legalResponsibilityRows,
+    patientDocumentRows,
   ] = await Promise.all([
     db.select().from(patients).where(eq(patients.organizationId, DEFAULT_ORGANIZATION_ID)).orderBy(asc(patients.lastName)),
     db.select().from(patientCoverages).orderBy(asc(patientCoverages.priority)),
@@ -567,6 +569,7 @@ async function loadWorkspace() {
     db.select().from(claimConfigurationValues).where(eq(claimConfigurationValues.status, "active")).orderBy(asc(claimConfigurationValues.category), asc(claimConfigurationValues.code)),
     db.select().from(eligibilityUpdateHistory).orderBy(desc(eligibilityUpdateHistory.createdAt)),
     db.select().from(patientLegalResponsibilities).orderBy(desc(patientLegalResponsibilities.createdAt)),
+    db.select().from(patientDocuments).where(eq(patientDocuments.organizationId, DEFAULT_ORGANIZATION_ID)).orderBy(desc(patientDocuments.createdAt)),
   ]);
 
   return {
@@ -597,6 +600,7 @@ async function loadWorkspace() {
     claimConfigurationValues: claimConfigurationRows,
     eligibilityUpdateHistory: eligibilityUpdateRows,
     legalResponsibilities: legalResponsibilityRows,
+    patientDocuments: patientDocumentRows,
   };
 }
 
