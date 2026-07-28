@@ -1325,6 +1325,18 @@ export async function POST(request: Request) {
       }
       const start = new Date(startAt);
       const end = new Date(start.getTime() + Number(payload.duration || 30) * 60_000);
+      if (Number.isNaN(start.getTime()) || end <= start) {
+        return Response.json({ error: "Enter a valid appointment start time and duration." }, { status: 400 });
+      }
+      const conflict = await db.select({ id: appointments.id }).from(appointments).where(and(
+        eq(appointments.providerId, providerId),
+        sql`${appointments.status} != 'cancelled'`,
+        sql`${appointments.startAt} < ${end.toISOString()}`,
+        sql`${appointments.endAt} > ${start.toISOString()}`,
+      )).limit(1);
+      if (conflict.length) {
+        return Response.json({ error: "This provider already has an appointment during the selected time." }, { status: 409 });
+      }
       const id = crypto.randomUUID();
       await db.insert(appointments).values({
         id,
@@ -1345,9 +1357,57 @@ export async function POST(request: Request) {
 
     if (action === "updateAppointmentStatus") {
       const id = clean(payload.id);
-      const status = clean(payload.status) as typeof appointments.$inferInsert.status;
+      const allowedStatuses = new Set(["scheduled", "confirmed", "arrived", "checked_in", "in_room", "completed", "cancelled", "no_show"]);
+      const status = clean(payload.status);
+      if (!id || !allowedStatuses.has(status)) {
+        return Response.json({ error: "Select a valid appointment status." }, { status: 400 });
+      }
+      const [appointment] = await db.select({ id: appointments.id }).from(appointments).where(and(
+        eq(appointments.id, id),
+        eq(appointments.organizationId, DEFAULT_ORGANIZATION_ID),
+      )).limit(1);
+      if (!appointment) return Response.json({ error: "Appointment not found." }, { status: 404 });
       await db.update(appointments).set({ status }).where(eq(appointments.id, id));
       return Response.json({ id, status });
+    }
+
+    if (action === "rescheduleAppointment") {
+      const id = clean(payload.id);
+      const providerId = clean(payload.providerId);
+      const facilityId = clean(payload.facilityId);
+      const startAt = clean(payload.startAt);
+      const duration = Number(payload.duration || 30);
+      const start = new Date(startAt);
+      const end = new Date(start.getTime() + duration * 60_000);
+      if (!id || !providerId || !facilityId || Number.isNaN(start.getTime()) || duration < 5 || duration > 480) {
+        return Response.json({ error: "Appointment, provider, facility, valid start time and duration are required." }, { status: 400 });
+      }
+      const [appointment] = await db.select().from(appointments).where(and(
+        eq(appointments.id, id),
+        eq(appointments.organizationId, DEFAULT_ORGANIZATION_ID),
+      )).limit(1);
+      if (!appointment) return Response.json({ error: "Appointment not found." }, { status: 404 });
+      const conflict = await db.select({ id: appointments.id }).from(appointments).where(and(
+        eq(appointments.providerId, providerId),
+        sql`${appointments.id} != ${id}`,
+        sql`${appointments.status} != 'cancelled'`,
+        sql`${appointments.startAt} < ${end.toISOString()}`,
+        sql`${appointments.endAt} > ${start.toISOString()}`,
+      )).limit(1);
+      if (conflict.length) {
+        return Response.json({ error: "This provider already has an appointment during the selected time." }, { status: 409 });
+      }
+      await db.update(appointments).set({
+        providerId,
+        facilityId,
+        startAt: start.toISOString(),
+        endAt: end.toISOString(),
+        appointmentType: clean(payload.appointmentType) || appointment.appointmentType,
+        billingContext: clean(payload.billingContext) || appointment.billingContext,
+        reason: clean(payload.reason) || appointment.reason,
+        status: "scheduled",
+      }).where(eq(appointments.id, id));
+      return Response.json({ id, startAt: start.toISOString(), endAt: end.toISOString(), status: "scheduled" });
     }
 
     if (action === "checkEligibility") {

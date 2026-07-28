@@ -59,6 +59,27 @@ test("stores patient and insurance-card documents with durable metadata", async 
   assert.match(hosting, /"r2": "DOCUMENTS"/);
 });
 
+test("provides a full scheduler command center and guarded appointment actions", async () => {
+  const [workspace, operationsApi] = await Promise.all([
+    readFile(new URL("../app/OperationsWorkspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/operations/route.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(workspace, /Live clinic schedule/);
+  assert.match(workspace, /Front desk flow/);
+  assert.match(workspace, /All providers/);
+  assert.match(workspace, /Day<\/button>/);
+  assert.match(workspace, /Week<\/button>/);
+  assert.match(workspace, /Reschedule/);
+  assert.match(workspace, /Eligibility/);
+  assert.match(workspace, /No show/);
+  assert.match(workspace, /In room/);
+  assert.match(workspace, /Conflict protection/);
+  assert.match(operationsApi, /rescheduleAppointment/);
+  assert.match(operationsApi, /already has an appointment during the selected time/);
+  assert.match(operationsApi, /allowedStatuses/);
+});
+
 test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local authentication", async () => {
   const [workspace, providerWorkspace, operationsWorkspace, operationsApi, claimHint, cms1500, providerApi, referringApi, dashboard, login, auth, onboarding, layout, schema, migration, providerMigration, operationsMigration, responsibilityMigration, cmsQualifierMigration, box19Migration, responsibilityStatusMigration, currentClaimMigration, claimConfigWorkspace, claimConfigApi, claimConfigDefaults, claimConfigPage, claimConfigMigration, eligibilityUpdateMigration, coverageResponsibilityMigration] = await Promise.all([
     readFile(new URL("../app/FacilityWorkspace.tsx", import.meta.url), "utf8"),

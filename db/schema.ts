@@ -490,7 +490,7 @@ export const appointments = sqliteTable(
     appointmentType: text("appointment_type").notNull(),
     billingContext: text("billing_context").notNull().default("routine"),
     reason: text("reason"),
-    status: text("status", { enum: ["scheduled", "confirmed", "checked_in", "in_room", "completed", "cancelled", "no_show"] }).notNull().default("scheduled"),
+    status: text("status", { enum: ["scheduled", "confirmed", "arrived", "checked_in", "in_room", "completed", "cancelled", "no_show"] }).notNull().default("scheduled"),
     eligibilityStatus: text("eligibility_status").notNull().default("pending"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },

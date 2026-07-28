@@ -116,6 +116,12 @@ function formatPhone(input: string) {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
+function toLocalDateTimeValue(input: unknown) {
+  const date = new Date(String(input || ""));
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function blankForm(module: OperationsModule): Record<string, string | boolean> {
   const today = new Date().toISOString().slice(0, 10);
   if (module === "patients") return { sex: "unknown", coverageType: "health", relationship: "self", priority: "primary", subscriberSameAsPatient: true, acceptAssignment: true, releaseOfInformation: true, assignmentOfBenefits: true, verifyEligibility: true, balanceRole: "final_balance", settlementStatus: "open", lienStatus: "not_recorded" };
@@ -159,6 +165,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
   const [claimIssues, setClaimIssues] = useState<Record<string, DataRow[]>>({});
   const [selectedPatientId, setSelectedPatientId] = useState("");
   const [eligibilityReview, setEligibilityReview] = useState<DataRow | null>(null);
+  const [schedulerDate, setSchedulerDate] = useState(new Date().toISOString().slice(0, 10));
 
   const loadData = useCallback(async () => {
     const response = await fetch("/api/operations");
@@ -224,6 +231,36 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
   function openForm(mode = "") {
     setFormMode(mode);
     setForm(blankForm(module));
+    setError("");
+    setNotice("");
+    setModalOpen(true);
+  }
+
+  function openAppointment(startAt = `${schedulerDate}T09:00`) {
+    setFormMode("");
+    setForm({ ...blankForm("scheduler"), startAt });
+    setError("");
+    setNotice("");
+    setModalOpen(true);
+  }
+
+  function rescheduleAppointment(appointment: DataRow) {
+    const start = new Date(value(appointment, "startAt"));
+    const end = new Date(value(appointment, "endAt"));
+    const duration = Math.max(5, Math.round((end.getTime() - start.getTime()) / 60_000));
+    setFormMode("reschedule");
+    setForm({
+      id: value(appointment, "id"),
+      patientId: value(appointment, "patientId"),
+      patientName: value(appointment, "patientName"),
+      providerId: value(appointment, "providerId"),
+      facilityId: value(appointment, "facilityId"),
+      startAt: toLocalDateTimeValue(value(appointment, "startAt")),
+      duration: String(duration),
+      appointmentType: value(appointment, "appointmentType"),
+      billingContext: value(appointment, "billingContext") || "routine",
+      reason: value(appointment, "reason"),
+    });
     setError("");
     setNotice("");
     setModalOpen(true);
@@ -297,7 +334,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     const submittedForm = { ...form };
     const actionName =
       module === "patients" ? formMode === "eligibility-review" ? "confirmEligibilityUpdate" : formMode === "responsibility" ? "createResponsibilityProfile" : formMode === "close-responsibility" ? "closeResponsibilityProfile" : formMode === "coverage-order" ? "updateCoverageOrder" : formMode === "coverage" ? ["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) ? "createLegalResponsibility" : "createPatientCoverage" : formMode === "edit-patient" ? "updatePatient" : "createPatient"
-      : module === "scheduler" ? "createAppointment"
+      : module === "scheduler" ? formMode === "reschedule" ? "rescheduleAppointment" : "createAppointment"
       : module === "eligibility" ? "checkEligibility"
       : module === "clinical" ? "createEncounter"
       : module === "claims" ? formMode === "reconsideration" ? "createReconsideration" : "createClaim"
@@ -326,7 +363,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
           ? `Patient ${formMode === "edit-patient" ? "updated" : "saved"} and eligibility verified: ${String((result.eligibility as DataRow).status)} coverage.`
           : result.eligibilityError ? `Patient ${formMode === "edit-patient" ? "updated" : "saved"}. Eligibility requires attention: ${String(result.eligibilityError)}`
           : formMode === "edit-patient" ? "Patient and coverage updated." : "Patient and coverage saved."
-        : module === "scheduler" ? "Appointment scheduled."
+        : module === "scheduler" ? formMode === "reschedule" ? "Appointment rescheduled. Its status returned to scheduled." : "Appointment scheduled."
         : module === "eligibility" ? "Eligibility verification completed."
         : module === "clinical" ? "Encounter signed and routed."
         : module === "claims" ? formMode === "reconsideration" ? "Reconsideration package prepared." : "Claim created from encounter."
@@ -523,6 +560,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
 
   function primaryAction() {
     if (module === "reports") return exportTransactions();
+    if (module === "scheduler") return openAppointment();
     openForm();
   }
 
@@ -594,19 +632,16 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
           )}
 
           {data && module === "scheduler" && (
-            <>
-              <div className="date-strip"><button type="button">‹</button>{["Mon 27", "Tue 28", "Wed 29", "Thu 30", "Fri 31"].map((day, index) => <span className={index === 1 ? "selected" : ""} key={day}>{day}</span>)}<button type="button">›</button></div>
-              <SummaryCards cards={[
-                ["Today’s appointments", String(data.appointments.filter((row) => value(row, "startAt").startsWith("2026-07-28")).length), "Across all providers"],
-                ["Confirmed", String(data.appointments.filter((row) => ["confirmed", "checked_in", "completed"].includes(value(row, "status"))).length), "Ready for care"],
-                ["Eligibility ready", String(data.appointments.filter((row) => value(row, "eligibilityStatus") === "eligible").length), "Verified before service"],
-                ["Open capacity", "6.5 hrs", "Across configured schedules"],
-              ]} />
-              <TablePanel title="Appointment flow" description="Schedule, check in and track encounter completion.">
-                <table><thead><tr><th>Time</th><th>Patient</th><th>Provider / facility</th><th>Visit</th><th>Eligibility</th><th>Status</th><th>Action</th></tr></thead>
-                  <tbody>{data.appointments.map((row) => <tr key={value(row, "id")}><td><strong>{shortDate(value(row, "startAt"), true)}</strong></td><td>{value(row, "patientName")}</td><td><strong className="location-name">{value(row, "providerName")}</strong><small className="address">{value(row, "facilityName")}</small></td><td><strong className="location-name">{value(row, "appointmentType")}</strong><small className="address">{value(row, "reason")}</small></td><td><Status value={value(row, "eligibilityStatus")} /></td><td><Status value={value(row, "status")} /></td><td><button className="table-button" onClick={() => action("updateAppointmentStatus", { id: value(row, "id"), status: value(row, "status") === "scheduled" ? "checked_in" : "completed" })} type="button">{value(row, "status") === "scheduled" ? "Check in" : "Complete"}</button></td></tr>)}</tbody></table>
-              </TablePanel>
-            </>
+            <SchedulerWorkspace
+              action={action}
+              data={data}
+              isSaving={isSaving}
+              onNew={openAppointment}
+              onReschedule={rescheduleAppointment}
+              selectedDate={schedulerDate}
+              setNotice={setNotice}
+              setSelectedDate={setSchedulerDate}
+            />
           )}
 
           {data && module === "eligibility" && (
@@ -728,7 +763,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
             <div className="modal-header"><div><span className="eyebrow">{meta.eyebrow}</span><h2 id="operations-modal-title">{modalTitle(module, formMode)}</h2><p>Required fields are marked. Claim-related fields include CMS-1500 guidance.</p></div><button aria-label="Close dialog" className="close-button" onClick={() => setModalOpen(false)} type="button">×</button></div>
             <form onSubmit={submitForm}>
               {module === "patients" && (formMode === "documents" ? <PatientDocumentsForm data={data} form={form} update={updateField} /> : formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm data={data} form={form} update={updateField} />)}
-              {module === "scheduler" && <AppointmentForm data={data} form={form} update={updateField} />}
+              {module === "scheduler" && <AppointmentForm data={data} form={form} update={updateField} reschedule={formMode === "reschedule"} />}
               {module === "eligibility" && <EligibilityForm data={data} form={form} update={updateField} />}
               {module === "clinical" && <EncounterForm data={data} form={form} update={updateField} />}
               {module === "claims" && (formMode === "reconsideration" ? <ReconsiderationForm form={form} update={updateField} /> : <ClaimForm data={data} form={form} update={updateField} />)}
@@ -738,7 +773,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
               {module === "procedures" && <ProcedureForm form={form} update={updateField} />}
               {module === "integrations" && <IntegrationForm form={form} update={updateField} />}
               {error && <div className="notice error form-error">{error}</div>}
-              <div className="modal-footer"><button className="secondary-button" onClick={() => setModalOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{isSaving ? (formMode === "documents" ? "Uploading…" : "Saving…") : formMode === "documents" ? "Upload documents" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button></div>
+              <div className="modal-footer"><button className="secondary-button" onClick={() => setModalOpen(false)} type="button">Cancel</button><button className="primary-button" disabled={isSaving} type="submit">{isSaving ? (formMode === "documents" ? "Uploading…" : "Saving…") : formMode === "documents" ? "Upload documents" : formMode === "reschedule" ? "Save new time" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button></div>
             </form>
           </section>
         </div>
@@ -753,6 +788,139 @@ function SummaryCards({ cards }: { cards: string[][] }) {
 
 function TablePanel({ title, description, search, setSearch, children }: { title: string; description: string; search?: string; setSearch?: (value: string) => void; children: React.ReactNode }) {
   return <section className="table-card operations-table"><div className="table-header"><div><h2>{title}</h2><p>{description}</p></div>{setSearch && <label className="search-field"><span aria-hidden="true">⌕</span><input aria-label={`Search ${title}`} onChange={(event) => setSearch(event.target.value)} placeholder="Search records" value={search} /></label>}</div><div className="table-wrap">{children}</div></section>;
+}
+
+function SchedulerWorkspace({ data, selectedDate, setSelectedDate, onNew, onReschedule, action, setNotice, isSaving }: {
+  data: WorkspaceData;
+  selectedDate: string;
+  setSelectedDate: (date: string) => void;
+  onNew: (startAt?: string) => void;
+  onReschedule: (appointment: DataRow) => void;
+  action: (name: string, payload?: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+  setNotice: (notice: string) => void;
+  isSaving: boolean;
+}) {
+  const [view, setView] = useState<"day" | "week">("day");
+  const [providerFilter, setProviderFilter] = useState("");
+  const [facilityFilter, setFacilityFilter] = useState("");
+  const [appointmentSearch, setAppointmentSearch] = useState("");
+  const selected = new Date(`${selectedDate}T12:00:00`);
+  const monday = new Date(selected);
+  monday.setDate(selected.getDate() - ((selected.getDay() + 6) % 7));
+  const weekDays = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(monday);
+    day.setDate(monday.getDate() + index);
+    return day;
+  });
+  const dateKey = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  const appointmentDate = (appointment: DataRow) => dateKey(new Date(value(appointment, "startAt")));
+  const moveDate = (days: number) => {
+    const next = new Date(selected);
+    next.setDate(selected.getDate() + days);
+    setSelectedDate(dateKey(next));
+  };
+  const filteredAppointments = data.appointments.filter((appointment) => {
+    const matchesProvider = !providerFilter || value(appointment, "providerId") === providerFilter;
+    const matchesFacility = !facilityFilter || value(appointment, "facilityId") === facilityFilter;
+    const needle = `${value(appointment, "patientName")} ${value(appointment, "providerName")} ${value(appointment, "appointmentType")} ${value(appointment, "reason")}`.toLowerCase();
+    return matchesProvider && matchesFacility && needle.includes(appointmentSearch.trim().toLowerCase());
+  });
+  const visibleDates = view === "day" ? [selected] : weekDays;
+  const visibleDateKeys = new Set(visibleDates.map(dateKey));
+  const visibleAppointments = filteredAppointments.filter((appointment) => visibleDateKeys.has(appointmentDate(appointment)));
+  const selectedAppointments = filteredAppointments
+    .filter((appointment) => appointmentDate(appointment) === selectedDate)
+    .sort((left, right) => value(left, "startAt").localeCompare(value(right, "startAt")));
+  const providers = data.providers.filter((provider) => !providerFilter || value(provider, "id") === providerFilter);
+  const columns = view === "day"
+    ? providers.map((provider) => ({ id: value(provider, "id"), label: `${value(provider, "firstName")} ${value(provider, "lastName")}`, sublabel: value(provider, "specialty"), date: selectedDate }))
+    : visibleDates.map((date) => ({ id: dateKey(date), label: date.toLocaleDateString("en-US", { weekday: "short", day: "numeric" }), sublabel: date.toLocaleDateString("en-US", { month: "short" }), date: dateKey(date) }));
+  const startHour = 8;
+  const endHour = 18;
+  const hourHeight = 68;
+  const scheduledMinutes = visibleAppointments
+    .filter((appointment) => !["cancelled", "no_show"].includes(value(appointment, "status")))
+    .reduce((total, appointment) => total + Math.max(0, (new Date(value(appointment, "endAt")).getTime() - new Date(value(appointment, "startAt")).getTime()) / 60_000), 0);
+  const capacityHours = Math.max(0, columns.length * (endHour - startHour) - scheduledMinutes / 60);
+  const eligibilityReady = visibleAppointments.filter((appointment) => value(appointment, "eligibilityStatus") === "eligible").length;
+  const activeAppointments = visibleAppointments.filter((appointment) => !["cancelled", "no_show"].includes(value(appointment, "status")));
+
+  async function changeStatus(appointment: DataRow, status: string) {
+    const result = await action("updateAppointmentStatus", { id: value(appointment, "id"), status });
+    if (result) setNotice(`${value(appointment, "patientName")} marked ${status.replaceAll("_", " ")}.`);
+  }
+
+  async function checkAppointmentEligibility(appointment: DataRow) {
+    const result = await action("checkEligibility", {
+      patientId: value(appointment, "patientId"),
+      dateOfService: appointmentDate(appointment),
+    });
+    if (result) setNotice(`Eligibility checked for ${value(appointment, "patientName")}.`);
+  }
+
+  function appointmentBlock(appointment: DataRow, columnIndex: number) {
+    const start = new Date(value(appointment, "startAt"));
+    const end = new Date(value(appointment, "endAt"));
+    const top = ((start.getHours() + start.getMinutes() / 60) - startHour) * hourHeight;
+    const height = Math.max(42, ((end.getTime() - start.getTime()) / 3_600_000) * hourHeight);
+    return <button className={`scheduler-appointment tone-${columnIndex % 5} status-${value(appointment, "status")}`} key={value(appointment, "id")} onClick={() => onReschedule(appointment)} style={{ height: `${height}px`, top: `${Math.max(0, top)}px` }} type="button"><span>{start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span><strong>{value(appointment, "patientName")}</strong><small>{value(appointment, "appointmentType")} · {value(appointment, "providerName")}</small></button>;
+  }
+
+  const rangeLabel = view === "day"
+    ? selected.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+    : `${weekDays[0].toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${weekDays[6].toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+
+  return <div className="scheduler-workspace">
+    <section className="scheduler-hero">
+      <div><span className="eyebrow">Live clinic schedule</span><h2>{rangeLabel}</h2><p>Manage provider capacity, patient readiness and front-desk flow from one screen.</p></div>
+      <div className="scheduler-hero-actions"><button onClick={() => setSelectedDate(dateKey(new Date()))} type="button">Today</button><div><button aria-label="Previous period" onClick={() => moveDate(view === "day" ? -1 : -7)} type="button">←</button><input aria-label="Selected schedule date" onChange={(event) => setSelectedDate(event.target.value)} type="date" value={selectedDate} /><button aria-label="Next period" onClick={() => moveDate(view === "day" ? 1 : 7)} type="button">→</button></div><button className="scheduler-new-button" onClick={() => onNew(`${selectedDate}T09:00`)} type="button">＋ New appointment</button></div>
+    </section>
+
+    <section className="scheduler-metric-grid">
+      <article><span className="scheduler-metric-icon mint">PX</span><div><small>Appointments</small><strong>{activeAppointments.length}</strong><p>{visibleAppointments.filter((appointment) => value(appointment, "status") === "completed").length} completed</p></div></article>
+      <article><span className="scheduler-metric-icon blue">✓</span><div><small>Eligibility ready</small><strong>{eligibilityReady}</strong><p>{visibleAppointments.length - eligibilityReady} need review</p></div></article>
+      <article><span className="scheduler-metric-icon amber">◷</span><div><small>Open capacity</small><strong>{capacityHours.toFixed(1)}h</strong><p>Across visible columns</p></div></article>
+      <article><span className="scheduler-metric-icon rose">!</span><div><small>No-show / cancelled</small><strong>{visibleAppointments.filter((appointment) => ["cancelled", "no_show"].includes(value(appointment, "status"))).length}</strong><p>Excluded from capacity</p></div></article>
+    </section>
+
+    <section className="scheduler-toolbar">
+      <div className="scheduler-view-switch" role="tablist" aria-label="Schedule view"><button aria-selected={view === "day"} className={view === "day" ? "active" : ""} onClick={() => setView("day")} role="tab" type="button">Day</button><button aria-selected={view === "week"} className={view === "week" ? "active" : ""} onClick={() => setView("week")} role="tab" type="button">Week</button></div>
+      <label className="scheduler-search"><span>⌕</span><input onChange={(event) => setAppointmentSearch(event.target.value)} placeholder="Search patient or visit" value={appointmentSearch} /></label>
+      <select aria-label="Filter by provider" onChange={(event) => setProviderFilter(event.target.value)} value={providerFilter}><option value="">All providers</option>{data.providers.map((provider) => <option key={value(provider, "id")} value={value(provider, "id")}>{value(provider, "firstName")} {value(provider, "lastName")}</option>)}</select>
+      <select aria-label="Filter by facility" onChange={(event) => setFacilityFilter(event.target.value)} value={facilityFilter}><option value="">All facilities</option>{data.facilities.map((facility) => <option key={value(facility, "id")} value={value(facility, "id")}>{value(facility, "name")}</option>)}</select>
+    </section>
+
+    <div className="scheduler-main-grid">
+      <section className="scheduler-calendar-card">
+        <div className="scheduler-week-strip">{weekDays.map((day) => <button className={dateKey(day) === selectedDate ? "active" : ""} key={dateKey(day)} onClick={() => setSelectedDate(dateKey(day))} type="button"><span>{day.toLocaleDateString("en-US", { weekday: "short" })}</span><strong>{day.getDate()}</strong></button>)}</div>
+        <div className="scheduler-calendar-scroll">
+          <div className="scheduler-calendar" style={{ gridTemplateColumns: `72px repeat(${Math.max(1, columns.length)}, minmax(170px, 1fr))` }}>
+            <div className="scheduler-corner">GMT</div>
+            {columns.map((column, index) => <div className="scheduler-column-heading" key={column.id}><span className={`provider-dot tone-${index % 5}`} /> <div><strong>{column.label}</strong><small>{column.sublabel}</small></div></div>)}
+            <div className="scheduler-time-rail" style={{ height: `${(endHour - startHour) * hourHeight}px` }}>{Array.from({ length: endHour - startHour + 1 }, (_, index) => <span key={index} style={{ top: `${index * hourHeight}px` }}>{new Date(2026, 0, 1, startHour + index).toLocaleTimeString("en-US", { hour: "numeric" })}</span>)}</div>
+            {columns.map((column, columnIndex) => <div className="scheduler-day-column" key={column.id} style={{ height: `${(endHour - startHour) * hourHeight}px` }}>
+              {Array.from({ length: endHour - startHour }, (_, index) => <button aria-label={`Create appointment at ${startHour + index}:00`} className="scheduler-hour-slot" key={index} onClick={() => onNew(`${column.date}T${String(startHour + index).padStart(2, "0")}:00`)} style={{ height: `${hourHeight}px`, top: `${index * hourHeight}px` }} type="button" />)}
+              {visibleAppointments.filter((appointment) => view === "day" ? value(appointment, "providerId") === column.id : appointmentDate(appointment) === column.date).map((appointment) => appointmentBlock(appointment, columnIndex))}
+            </div>)}
+          </div>
+        </div>
+      </section>
+
+      <aside className="scheduler-agenda">
+        <header><div><span className="eyebrow">Front desk flow</span><h3>{selected.toLocaleDateString("en-US", { month: "long", day: "numeric" })}</h3></div><span>{selectedAppointments.length}</span></header>
+        <div className="scheduler-agenda-list">{selectedAppointments.length ? selectedAppointments.map((appointment) => {
+          const status = value(appointment, "status");
+          const start = new Date(value(appointment, "startAt"));
+          return <article key={value(appointment, "id")}><div className="agenda-time"><strong>{start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</strong><small>{Math.max(5, Math.round((new Date(value(appointment, "endAt")).getTime() - start.getTime()) / 60_000))} min</small></div><div className="agenda-detail"><div><strong>{value(appointment, "patientName")}</strong><Status value={status} /></div><p>{value(appointment, "appointmentType")} · {value(appointment, "providerName")}</p><small><Status value={value(appointment, "eligibilityStatus")} /> {value(appointment, "facilityName")}</small><div className="agenda-actions"><button onClick={() => onReschedule(appointment)} type="button">Reschedule</button>{value(appointment, "eligibilityStatus") !== "eligible" && <button disabled={isSaving} onClick={() => checkAppointmentEligibility(appointment)} type="button">Eligibility</button>}{status === "scheduled" && <button onClick={() => changeStatus(appointment, "confirmed")} type="button">Confirm</button>}{["scheduled", "confirmed"].includes(status) && <button onClick={() => changeStatus(appointment, "arrived")} type="button">Arrived</button>}{status === "arrived" && <button onClick={() => changeStatus(appointment, "checked_in")} type="button">Check in</button>}{status === "checked_in" && <button onClick={() => changeStatus(appointment, "in_room")} type="button">In room</button>}{status === "in_room" && <button onClick={() => changeStatus(appointment, "completed")} type="button">Complete</button>}{!["completed", "cancelled", "no_show"].includes(status) && <><button className="quiet-danger" onClick={() => changeStatus(appointment, "no_show")} type="button">No show</button><button className="quiet-danger" onClick={() => changeStatus(appointment, "cancelled")} type="button">Cancel</button></>}</div></div></article>;
+        }) : <div className="scheduler-empty"><strong>No appointments</strong><p>Click any open time slot to schedule this day.</p></div>}</div>
+      </aside>
+    </div>
+  </div>;
 }
 
 const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
@@ -811,7 +979,7 @@ function PersonCell({ row }: { row: DataRow }) {
 }
 
 function Status({ value: status }: { value: string }) {
-  const tone = ["active", "eligible", "clean", "ready", "paid", "posted", "accepted", "configured", "completed", "yes", "sent"].includes(status) ? "active" : ["error", "errors", "rejected", "denied", "failed", "inactive"].includes(status) ? "danger" : "inactive";
+  const tone = ["active", "eligible", "clean", "ready", "paid", "posted", "accepted", "configured", "confirmed", "arrived", "checked_in", "in_room", "completed", "yes", "sent"].includes(status) ? "active" : ["error", "errors", "rejected", "denied", "failed", "inactive", "cancelled", "no_show"].includes(status) ? "danger" : "inactive";
   return <span className={`status-pill ${tone}`}>{status.replaceAll("_", " ") || "—"}</span>;
 }
 
@@ -1245,8 +1413,23 @@ function PatientForm({ data, form, update }: FormProps) {
   );
 }
 
-function AppointmentForm({ data, form, update }: FormProps) {
-  return <fieldset><legend>Appointment details</legend><div className="form-grid"><Select label="Patient" name="patientId" form={form} update={update} required options={data.patients.map((row) => [value(row, "id"), `${value(row, "firstName")} ${value(row, "lastName")}`])} /><Select label="Billing context" name="billingContext" form={form} update={update} required options={[["routine", "Routine medical"], ["auto_pip", "Auto accident / PIP"], ["workers_comp", "Workers’ compensation"], ["liability", "Liability case"], ["lop_legal", "LOP / legal"], ["other", "Other"]]} /><Select label="Provider" name="providerId" form={form} update={update} required options={data.providers.map((row) => [value(row, "id"), `${value(row, "firstName")} ${value(row, "lastName")}`])} /><Select label="Facility" name="facilityId" form={form} update={update} required hint="facilityAssignment" options={data.facilities.map((row) => [value(row, "id"), value(row, "name")])} /><Input label="Start" name="startAt" form={form} update={update} required type="datetime-local" /><Input label="Duration minutes" name="duration" form={form} update={update} required type="number" /><Input label="Appointment type" name="appointmentType" form={form} update={update} required /><div className="span-2"><Input label="Reason for visit" name="reason" form={form} update={update} /></div></div></fieldset>;
+function AppointmentForm({ data, form, update, reschedule = false }: FormProps & { reschedule?: boolean }) {
+  return <div className="appointment-editor">
+    <section className="responsibility-intro"><div><span className="eyebrow">{reschedule ? "Change appointment time" : "Schedule a visit"}</span><h3>{reschedule ? String(form.patientName || "Patient") : "New patient appointment"}</h3><p>{reschedule ? "The original appointment remains the same record. Saving resets it to scheduled for front-desk confirmation." : "Select the patient, visit type, provider and location. Provider conflicts are checked before saving."}</p></div></section>
+    <fieldset><legend>Patient and visit</legend><div className="form-grid">
+      {reschedule ? <label className="field">Patient <span /><input disabled value={String(form.patientName || "")} /></label> : <Select label="Patient" name="patientId" form={form} update={update} required options={data.patients.map((row) => [value(row, "id"), `${value(row, "firstName")} ${value(row, "lastName")} · ${value(row, "accountNumber")}`])} />}
+      <Select label="Appointment type" name="appointmentType" form={form} update={update} required options={[["New patient visit", "New patient visit"], ["Office visit", "Office visit"], ["Follow-up", "Follow-up"], ["Annual wellness", "Annual wellness"], ["Procedure", "Procedure"], ["Physical therapy", "Physical therapy"], ["Telehealth", "Telehealth"], ["Consultation", "Consultation"]]} />
+      <Select label="Billing context" name="billingContext" form={form} update={update} required options={[["routine", "Routine medical"], ["auto_pip", "Auto accident / PIP"], ["workers_comp", "Workers’ compensation"], ["liability", "Liability case"], ["lop_legal", "LOP / legal"], ["other", "Other"]]} />
+      <Input label="Reason for visit" name="reason" form={form} update={update} placeholder="Symptoms, follow-up reason or procedure" />
+    </div></fieldset>
+    <fieldset><legend>Time and resources</legend><div className="form-grid">
+      <Select label="Provider" name="providerId" form={form} update={update} required options={data.providers.map((row) => [value(row, "id"), `${value(row, "firstName")} ${value(row, "lastName")} · ${value(row, "specialty")}`])} />
+      <Select label="Facility" name="facilityId" form={form} update={update} required hint="facilityAssignment" options={data.facilities.map((row) => [value(row, "id"), value(row, "name")])} />
+      <Input label="Start" name="startAt" form={form} update={update} required type="datetime-local" />
+      <Select label="Duration" name="duration" form={form} update={update} required options={[["15", "15 minutes"], ["30", "30 minutes"], ["45", "45 minutes"], ["60", "1 hour"], ["90", "1 hour 30 minutes"], ["120", "2 hours"]]} />
+    </div></fieldset>
+    <div className="responsibility-rule-note"><strong>Conflict protection</strong><span>PRACX blocks overlapping appointments for the same provider. Eligibility remains tied to the patient and selected date of service.</span></div>
+  </div>;
 }
 
 function EligibilityForm({ data, form, update }: FormProps) {
@@ -1373,6 +1556,7 @@ function IntegrationForm({ form, update }: SimpleFormProps) {
 }
 
 function modalTitle(module: OperationsModule, mode: string) {
+  if (module === "scheduler" && mode === "reschedule") return "Reschedule appointment";
   if (module === "patients" && mode === "documents") return "Patient documents";
   if (module === "patients" && mode === "eligibility-review") return "Review eligibility updates";
   if (module === "patients" && mode === "responsibility") return "Add DOS responsibility profile";
