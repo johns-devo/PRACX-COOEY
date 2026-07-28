@@ -17,6 +17,7 @@ import {
   integrations,
   ledgerTransactions,
   patientCoverages,
+  patientLegalResponsibilities,
   patients,
   payers,
   payments,
@@ -82,6 +83,80 @@ function money(value: unknown) {
   return Number.isFinite(number) ? number.toFixed(2) : "0.00";
 }
 
+const INSURANCE_COVERAGE_TYPES = new Set(["health", "medicare_medicaid", "auto_pip", "workers_comp", "liability", "other_insurance"]);
+const LEGAL_RESPONSIBILITY_TYPES = new Set(["lop", "attorney", "self_pay", "other_responsibility"]);
+
+function coverageType(input: unknown) {
+  const selected = clean(input) || "health";
+  return INSURANCE_COVERAGE_TYPES.has(selected) ? selected : "health";
+}
+
+function coverageClaimValues(payload: Record<string, unknown>) {
+  return {
+    coverageType: coverageType(payload.coverageType),
+    propertyCasualtyClaimNumber: clean(payload.propertyCasualtyClaimNumber) || null,
+    accidentDate: clean(payload.accidentDate) || null,
+    accidentState: clean(payload.accidentState).toUpperCase() || null,
+    adjusterName: clean(payload.adjusterName) || null,
+    adjusterPhone: clean(payload.adjusterPhone) || null,
+    adjusterEmail: clean(payload.adjusterEmail) || null,
+    adjusterFax: clean(payload.adjusterFax) || null,
+    claimAddressLine1: clean(payload.claimAddressLine1) || null,
+    claimCity: clean(payload.claimCity) || null,
+    claimState: clean(payload.claimState).toUpperCase() || null,
+    claimPostalCode: clean(payload.claimPostalCode) || null,
+    coverageLimit: clean(payload.coverageLimit) ? money(payload.coverageLimit) : null,
+    amountUsed: clean(payload.amountUsed) ? money(payload.amountUsed) : "0.00",
+    authorizationNumber: clean(payload.authorizationNumber) || null,
+  };
+}
+
+function validateCoverageClaimValues(payload: Record<string, unknown>) {
+  const type = coverageType(payload.coverageType);
+  if (type === "auto_pip" && (!clean(payload.propertyCasualtyClaimNumber) || !clean(payload.accidentDate) || !/^[A-Z]{2}$/.test(clean(payload.accidentState).toUpperCase()))) {
+    return "PIP coverage requires the property-casualty claim number, accident date and two-letter accident state.";
+  }
+  if (type === "workers_comp" && !clean(payload.propertyCasualtyClaimNumber)) {
+    return "Workers’ compensation coverage requires its property-casualty claim number.";
+  }
+  if (Number(payload.amountUsed || 0) < 0 || Number(payload.coverageLimit || 0) < 0) {
+    return "Coverage limit and amount used cannot be negative.";
+  }
+  if (clean(payload.coverageLimit) && Number(payload.amountUsed || 0) > Number(payload.coverageLimit)) {
+    return "Amount used cannot exceed the recorded coverage limit.";
+  }
+  return "";
+}
+
+function legalResponsibilityValues(payload: Record<string, unknown>, patientId: string) {
+  return {
+    id: crypto.randomUUID(),
+    patientId,
+    responsibilityType: clean(payload.coverageType),
+    balanceRole: clean(payload.balanceRole) || "final_balance",
+    organizationName: clean(payload.organizationName) || null,
+    attorneyName: clean(payload.attorneyName) || null,
+    caseNumber: clean(payload.caseNumber) || null,
+    lopNumber: clean(payload.lopNumber) || null,
+    signedDate: clean(payload.signedDate) || null,
+    receivedDate: clean(payload.receivedDate) || null,
+    effectiveDate: clean(payload.effectiveDate) || null,
+    terminationDate: clean(payload.terminationDate) || null,
+    authorizedAmount: clean(payload.authorizedAmount) ? money(payload.authorizedAmount) : null,
+    settlementStatus: clean(payload.settlementStatus) || "open",
+    lienStatus: clean(payload.lienStatus) || "not_recorded",
+    phone: clean(payload.responsibilityPhone) || null,
+    email: clean(payload.responsibilityEmail) || null,
+    fax: clean(payload.responsibilityFax) || null,
+    addressLine1: clean(payload.responsibilityAddressLine1) || null,
+    city: clean(payload.responsibilityCity) || null,
+    state: clean(payload.responsibilityState).toUpperCase() || null,
+    postalCode: clean(payload.responsibilityPostalCode) || null,
+    notes: clean(payload.responsibilityNotes) || null,
+    status: "active" as const,
+  };
+}
+
 function dateOnly(value = new Date()) {
   return value.toISOString().slice(0, 10);
 }
@@ -92,38 +167,65 @@ function claim837({
   payer,
   provider,
   lines,
+  coverage,
 }: {
   claim: typeof claims.$inferSelect;
   patient: typeof patients.$inferSelect;
   payer: typeof payers.$inferSelect | null;
   provider: typeof providers.$inferSelect;
   lines: (typeof claimLines.$inferSelect)[];
+  coverage: typeof patientCoverages.$inferSelect | null;
 }) {
   const control = claim.claimNumber.replace(/\D/g, "").slice(-9).padStart(9, "0");
   const now = new Date();
   const ymd = now.toISOString().slice(2, 10).replaceAll("-", "");
   const hm = now.toISOString().slice(11, 16).replace(":", "");
-  const segments = [
-    `ISA*00*          *00*          *ZZ*PRACX          *ZZ*${(payer?.payerId || "FILE").padEnd(15)}*${ymd}*${hm}*^*00501*${control}*0*T*:~`,
-    `GS*HC*PRACX*${payer?.payerId || "FILE"}*20${ymd}*${hm}*${Number(control)}*X*005010X222A1~`,
+  const filingIndicator = coverage?.coverageType === "auto_pip"
+    ? "AM"
+    : coverage?.coverageType === "workers_comp"
+      ? "WC"
+      : payer?.claimFilingIndicator || "CI";
+  const relationshipCode = coverage?.relationship === "spouse" ? "01" : coverage?.relationship === "child" ? "19" : coverage?.relationship === "self" || !coverage ? "18" : "G8";
+  const subscriberIsPatient = relationshipCode === "18";
+  const subscriberSex = coverage?.subscriberSex === "male" ? "M" : coverage?.subscriberSex === "female" ? "F" : "U";
+  const relatedCause = claim.autoAccidentRelated === "Y"
+    ? `AA:::${claim.autoAccidentState || ""}`
+    : claim.employmentRelated === "Y"
+      ? "EM"
+      : claim.otherAccidentRelated === "Y" ? "OA" : "";
+  const transactionSegments = [
     `ST*837*0001*005010X222A1~`,
     `BHT*0019*00*${claim.claimNumber}*20${ymd}*${hm}*CH~`,
     `NM1*41*2*PRACX CARE OPERATIONS*****46*PRACX~`,
     `NM1*40*2*${payer?.name || "FILE EXPORT"}*****46*${payer?.payerId || "FILE"}~`,
     `HL*1**20*1~`,
     `NM1*85*2*PRACX HEALTH NETWORK*****XX*${provider.npi || "0000000000"}~`,
-    `HL*2*1*22*0~`,
-    `SBR*P*18*******${payer?.claimFilingIndicator || "CI"}~`,
-    `NM1*IL*1*${patient.lastName}*${patient.firstName}*${patient.middleName || ""}***MI*${claim.coverageId || ""}~`,
-    `DMG*D8*${patient.dateOfBirth.replaceAll("-", "")}*${patient.sex === "male" ? "M" : patient.sex === "female" ? "F" : "U"}~`,
-    `CLM*${claim.claimNumber}*${claim.totalCharge}***11:B:1*Y*A*Y*Y~`,
+    `HL*2*1*22*${subscriberIsPatient ? "0" : "1"}~`,
+    `SBR*P*${relationshipCode}*******${filingIndicator}~`,
+    `NM1*IL*1*${coverage?.subscriberLastName || patient.lastName}*${coverage?.subscriberFirstName || patient.firstName}****MI*${coverage?.memberId || ""}~`,
+    `DMG*D8*${(coverage?.subscriberDateOfBirth || patient.dateOfBirth).replaceAll("-", "")}*${coverage ? subscriberSex : patient.sex === "male" ? "M" : patient.sex === "female" ? "F" : "U"}~`,
+    ...(!subscriberIsPatient ? [
+      `HL*3*2*23*0~`,
+      `PAT*${relationshipCode}~`,
+      `NM1*QC*1*${patient.lastName}*${patient.firstName}*${patient.middleName || ""}~`,
+      `DMG*D8*${patient.dateOfBirth.replaceAll("-", "")}*${patient.sex === "male" ? "M" : patient.sex === "female" ? "F" : "U"}~`,
+    ] : []),
+    ...(coverage?.propertyCasualtyClaimNumber ? [`REF*Y4*${coverage.propertyCasualtyClaimNumber}~`] : []),
+    `CLM*${claim.claimNumber}*${claim.totalCharge}***11:B:1*Y*A*Y*Y**${relatedCause}~`,
+    ...(coverage?.accidentDate ? [`DTP*439*D8*${coverage.accidentDate.replaceAll("-", "")}~`] : []),
+    ...(coverage?.authorizationNumber ? [`REF*G1*${coverage.authorizationNumber}~`] : []),
     `HI*ABK:${JSON.parse((claim.scrubberMessages || "[]"))[0]?.diagnosis || "Z0000"}~`,
     ...lines.flatMap((line, index) => [
       `LX*${index + 1}~`,
       `SV1*HC:${line.procedureCode}${line.modifiers ? `:${line.modifiers.replaceAll(",", ":")}` : ""}*${line.chargeAmount}*UN*${line.units}***${line.diagnosisPointers}~`,
       `DTP*472*D8*${line.serviceDateFrom.replaceAll("-", "")}~`,
     ]),
-    `SE*${15 + lines.length * 3}*0001~`,
+  ];
+  const segments = [
+    `ISA*00*          *00*          *ZZ*PRACX          *ZZ*${(payer?.payerId || "FILE").padEnd(15)}*${ymd}*${hm}*^*00501*${control}*0*T*:~`,
+    `GS*HC*PRACX*${payer?.payerId || "FILE"}*20${ymd}*${hm}*${Number(control)}*X*005010X222A1~`,
+    ...transactionSegments,
+    `SE*${transactionSegments.length + 1}*0001~`,
     `GE*1*${Number(control)}~`,
     `IEA*1*${control}~`,
   ];
@@ -271,6 +373,7 @@ async function loadWorkspace() {
     responsibilitySnapshotRows,
     claimConfigurationRows,
     eligibilityUpdateRows,
+    legalResponsibilityRows,
   ] = await Promise.all([
     db.select().from(patients).where(eq(patients.organizationId, DEFAULT_ORGANIZATION_ID)).orderBy(asc(patients.lastName)),
     db.select().from(patientCoverages).orderBy(asc(patientCoverages.priority)),
@@ -463,6 +566,7 @@ async function loadWorkspace() {
     db.select().from(claimResponsibilitySnapshots).orderBy(desc(claimResponsibilitySnapshots.createdAt)),
     db.select().from(claimConfigurationValues).where(eq(claimConfigurationValues.status, "active")).orderBy(asc(claimConfigurationValues.category), asc(claimConfigurationValues.code)),
     db.select().from(eligibilityUpdateHistory).orderBy(desc(eligibilityUpdateHistory.createdAt)),
+    db.select().from(patientLegalResponsibilities).orderBy(desc(patientLegalResponsibilities.createdAt)),
   ]);
 
   return {
@@ -492,6 +596,7 @@ async function loadWorkspace() {
     claimResponsibilitySnapshots: responsibilitySnapshotRows,
     claimConfigurationValues: claimConfigurationRows,
     eligibilityUpdateHistory: eligibilityUpdateRows,
+    legalResponsibilities: legalResponsibilityRows,
   };
 }
 
@@ -579,6 +684,27 @@ export async function POST(request: Request) {
       return Response.json({ id: eligibilityCheckId, applied: appliedSnapshot });
     }
 
+    if (action === "createLegalResponsibility") {
+      const patientId = clean(payload.patientId);
+      const responsibilityType = clean(payload.coverageType);
+      if (!patientId || !LEGAL_RESPONSIBILITY_TYPES.has(responsibilityType)) {
+        return Response.json({ error: "Select a patient and a valid legal or patient responsibility type." }, { status: 400 });
+      }
+      const [patient] = await db.select().from(patients).where(eq(patients.id, patientId)).limit(1);
+      if (!patient || patient.organizationId !== DEFAULT_ORGANIZATION_ID) {
+        return Response.json({ error: "Patient not found." }, { status: 404 });
+      }
+      if (responsibilityType === "lop" && (!clean(payload.organizationName) || !clean(payload.attorneyName) || !clean(payload.lopNumber) || !clean(payload.signedDate))) {
+        return Response.json({ error: "LOP requires the law firm, attorney, LOP number and signed date." }, { status: 400 });
+      }
+      if (responsibilityType === "attorney" && (!clean(payload.organizationName) || !clean(payload.attorneyName) || !clean(payload.caseNumber))) {
+        return Response.json({ error: "Attorney responsibility requires the law firm, attorney and case number." }, { status: 400 });
+      }
+      const values = legalResponsibilityValues(payload, patientId);
+      await db.insert(patientLegalResponsibilities).values(values);
+      return Response.json({ id: values.id }, { status: 201 });
+    }
+
     if (action === "createPatientCoverage") {
       const patientId = clean(payload.patientId);
       const planId = clean(payload.planId);
@@ -607,6 +733,8 @@ export async function POST(request: Request) {
       if (effectiveDate && terminationDate && terminationDate < effectiveDate) {
         return Response.json({ error: "Coverage termination cannot be earlier than the effective date." }, { status: 400 });
       }
+      const coverageError = validateCoverageClaimValues(payload);
+      if (coverageError) return Response.json({ error: coverageError }, { status: 400 });
       const priority = coveragePriority(payload.priority);
       const subscriberSameAsPatient = payload.subscriberSameAsPatient !== false;
       const manualSubscriberFields = ["subscriberFirstName", "subscriberLastName", "subscriberDateOfBirth", "subscriberSex", "subscriberAddressLine1", "subscriberCity", "subscriberState", "subscriberPostalCode"];
@@ -639,6 +767,7 @@ export async function POST(request: Request) {
         subscriberPostalCode: subscriberSameAsPatient ? patient.postalCode : clean(payload.subscriberPostalCode),
         effectiveDate,
         terminationDate,
+        ...coverageClaimValues(payload),
         acceptAssignment: "yes",
         releaseOfInformation: "yes",
         assignmentOfBenefits: "yes",
@@ -744,6 +873,10 @@ export async function POST(request: Request) {
         .innerJoin(insurancePlans, eq(insurancePlans.id, patientCoverages.planId))
         .innerJoin(payers, eq(payers.id, insurancePlans.payerId))
         .where(eq(patientCoverages.patientId, patientId));
+      const legalRows = await db.select().from(patientLegalResponsibilities).where(and(
+        eq(patientLegalResponsibilities.patientId, patientId),
+        eq(patientLegalResponsibilities.status, "active"),
+      ));
       const specialSources: Record<string, { name: string; type: string }> = {
         "special:patient": { name: `${patient.firstName} ${patient.lastName}`, type: "patient" },
         "special:lop": { name: clean(payload.legalSourceName) || "LOP / legal receivable", type: "lop" },
@@ -761,6 +894,16 @@ export async function POST(request: Request) {
             coverageId: coverage.id,
             sourceName: `${coverage.payerName} · ${coverage.planName}`,
             sourceType: coverage.payerType.toLowerCase().includes("pip") ? "pip" : "insurance",
+          };
+        }
+        if (source.value.startsWith("legal:")) {
+          const record = legalRows.find((item) => item.id === source.value.slice("legal:".length));
+          if (!record) throw new Error("A selected legal responsibility does not belong to this patient.");
+          return {
+            ...source,
+            coverageId: null,
+            sourceName: record.organizationName || record.attorneyName || record.responsibilityType.replaceAll("_", " "),
+            sourceType: record.responsibilityType,
           };
         }
         const special = specialSources[source.value];
@@ -941,10 +1084,21 @@ export async function POST(request: Request) {
       }
       const planId = clean(payload.planId);
       const memberId = clean(payload.memberId);
+      const selectedCoverageType = clean(payload.coverageType) || "health";
       const effectiveDate = clean(payload.effectiveDate) || null;
       const terminationDate = clean(payload.terminationDate) || null;
       if (effectiveDate && terminationDate && terminationDate < effectiveDate) {
         return Response.json({ error: "Coverage termination cannot be earlier than the effective date." }, { status: 400 });
+      }
+      if (INSURANCE_COVERAGE_TYPES.has(selectedCoverageType) && Boolean(planId) !== Boolean(memberId)) {
+        return Response.json({ error: "Insurance plan and member ID must be entered together." }, { status: 400 });
+      }
+      if (planId && memberId) {
+        const coverageError = validateCoverageClaimValues(payload);
+        if (coverageError) return Response.json({ error: coverageError }, { status: 400 });
+      }
+      if (selectedCoverageType === "lop" && (!clean(payload.organizationName) || !clean(payload.attorneyName) || !clean(payload.lopNumber) || !clean(payload.signedDate))) {
+        return Response.json({ error: "LOP requires the law firm, attorney, LOP number and signed date." }, { status: 400 });
       }
       const subscriberSameAsPatient = payload.subscriberSameAsPatient !== false;
       const manualSubscriberFields = ["subscriberFirstName", "subscriberLastName", "subscriberDateOfBirth", "subscriberSex", "subscriberAddressLine1", "subscriberCity", "subscriberState", "subscriberPostalCode"];
@@ -994,13 +1148,20 @@ export async function POST(request: Request) {
           subscriberPostalCode: subscriberSameAsPatient ? postalCode : clean(payload.subscriberPostalCode),
           effectiveDate,
           terminationDate,
+          ...coverageClaimValues(payload),
           acceptAssignment: payload.acceptAssignment === false ? "no" : "yes",
           releaseOfInformation: payload.releaseOfInformation === false ? "no" : "yes",
           assignmentOfBenefits: payload.assignmentOfBenefits === false ? "no" : "yes",
           status: "active",
         });
       }
+      if (LEGAL_RESPONSIBILITY_TYPES.has(selectedCoverageType)) {
+        await db.insert(patientLegalResponsibilities).values(legalResponsibilityValues(payload, patientId));
+      }
       if (payload.verifyEligibility === true) {
+        if (LEGAL_RESPONSIBILITY_TYPES.has(selectedCoverageType)) {
+          return Response.json({ id: patientId, accountNumber }, { status: 201 });
+        }
         if (!coverageId) {
           return Response.json({
             id: patientId,
@@ -1048,6 +1209,10 @@ export async function POST(request: Request) {
       }
       if (effectiveDate && terminationDate && terminationDate < effectiveDate) {
         return Response.json({ error: "Coverage termination cannot be earlier than the effective date." }, { status: 400 });
+      }
+      if (planId && memberId) {
+        const coverageError = validateCoverageClaimValues(payload);
+        if (coverageError) return Response.json({ error: coverageError }, { status: 400 });
       }
       const subscriberSameAsPatient = payload.subscriberSameAsPatient !== false;
       const manualSubscriberFields = ["subscriberFirstName", "subscriberLastName", "subscriberDateOfBirth", "subscriberSex", "subscriberAddressLine1", "subscriberCity", "subscriberState", "subscriberPostalCode"];
@@ -1104,6 +1269,7 @@ export async function POST(request: Request) {
           subscriberPostalCode: subscriberSameAsPatient ? postalCode : clean(payload.subscriberPostalCode),
           effectiveDate,
           terminationDate,
+          ...coverageClaimValues(payload),
           acceptAssignment: payload.acceptAssignment === false ? "no" as const : "yes" as const,
           releaseOfInformation: payload.releaseOfInformation === false ? "no" as const : "yes" as const,
           assignmentOfBenefits: payload.assignmentOfBenefits === false ? "no" as const : "yes" as const,
@@ -1400,14 +1566,14 @@ export async function POST(request: Request) {
       const profileSources = responsibilityProfile
         ? await db.select().from(responsibilitySources).where(eq(responsibilitySources.profileId, responsibilityProfile.id)).orderBy(asc(responsibilitySources.sequence))
         : [];
-      const profilePrimary = profileSources.find((source) => source.role === "primary");
+      const profileClaimSource = profileSources.find((source) => source.coverageId);
       const [fallbackCoverage] = await db
         .select()
         .from(patientCoverages)
         .where(and(eq(patientCoverages.patientId, encounter.patientId), eq(patientCoverages.status, "active")))
         .orderBy(sql`case ${patientCoverages.priority} when 'primary' then 1 when 'secondary' then 2 when 'tertiary' then 3 else 4 end`)
         .limit(1);
-      const coverageId = profilePrimary?.coverageId || fallbackCoverage?.id || null;
+      const coverageId = responsibilityProfile ? profileClaimSource?.coverageId || null : fallbackCoverage?.id || null;
       const [coverage] = coverageId
         ? await db.select().from(patientCoverages).where(eq(patientCoverages.id, coverageId)).limit(1)
         : [];
@@ -1418,6 +1584,8 @@ export async function POST(request: Request) {
       const total = procedureRows.reduce((sum, item) => sum + Number(item.defaultCharge), 0);
       const id = crypto.randomUUID();
       const claimNumber = `CLM${Date.now().toString().slice(-7)}`;
+      const isPip = coverage?.coverageType === "auto_pip";
+      const isWorkersComp = coverage?.coverageType === "workers_comp";
       await db.insert(claims).values({
         id,
         organizationId: DEFAULT_ORGANIZATION_ID,
@@ -1431,9 +1599,9 @@ export async function POST(request: Request) {
         referringProviderId: encounter.referringProviderId,
         insuranceTypeCode: clean(payload.insuranceTypeCode) || "other",
         otherPlanIndicator: clean(payload.otherPlanIndicator) || "N",
-        employmentRelated: clean(payload.employmentRelated) || "N",
-        autoAccidentRelated: clean(payload.autoAccidentRelated) || "N",
-        autoAccidentState: clean(payload.autoAccidentState).toUpperCase() || null,
+        employmentRelated: isWorkersComp ? "Y" : clean(payload.employmentRelated) || "N",
+        autoAccidentRelated: isPip ? "Y" : clean(payload.autoAccidentRelated) || "N",
+        autoAccidentState: isPip ? coverage.accidentState : clean(payload.autoAccidentState).toUpperCase() || null,
         otherAccidentRelated: clean(payload.otherAccidentRelated) || "N",
         claimConditionCodes: JSON.stringify(conditionCodes),
         dateOfService: encounter.dateOfService,
@@ -1441,12 +1609,12 @@ export async function POST(request: Request) {
         postingDate: today,
         status: "draft",
         totalCharge: total.toFixed(2),
-        otherClaimIdQualifier: claimQualifiers.otherClaimIdQualifier || null,
-        otherClaimId: clean(payload.otherClaimId) || null,
-        conditionDateQualifier: claimQualifiers.conditionDateQualifier || null,
-        conditionDate: clean(payload.conditionDate) || null,
-        otherDateQualifier: claimQualifiers.otherDateQualifier || null,
-        otherDate: clean(payload.otherDate) || null,
+        otherClaimIdQualifier: coverage?.propertyCasualtyClaimNumber ? "Y4" : claimQualifiers.otherClaimIdQualifier || null,
+        otherClaimId: coverage?.propertyCasualtyClaimNumber || clean(payload.otherClaimId) || null,
+        conditionDateQualifier: isPip && coverage?.accidentDate ? "431" : claimQualifiers.conditionDateQualifier || null,
+        conditionDate: isPip && coverage?.accidentDate ? coverage.accidentDate : clean(payload.conditionDate) || null,
+        otherDateQualifier: coverage?.accidentDate ? "439" : claimQualifiers.otherDateQualifier || null,
+        otherDate: coverage?.accidentDate || clean(payload.otherDate) || null,
         referringProviderQualifier: claimQualifiers.referringProviderQualifier || null,
         referringOtherIdQualifier: claimQualifiers.referringOtherIdQualifier || null,
         referringOtherId: clean(payload.referringOtherId) || null,
@@ -1458,7 +1626,7 @@ export async function POST(request: Request) {
         hospitalizationTo: clean(payload.hospitalizationTo) || null,
         outsideLabIndicator: clean(payload.outsideLabIndicator) || "N",
         outsideLabCharges: clean(payload.outsideLabCharges) ? money(payload.outsideLabCharges) : null,
-        priorAuthorizationNumber: clean(payload.priorAuthorizationNumber) || null,
+        priorAuthorizationNumber: coverage?.authorizationNumber || clean(payload.priorAuthorizationNumber) || null,
         federalTaxIdType: clean(payload.federalTaxIdType) || null,
         federalTaxIdNumber: clean(payload.federalTaxIdNumber).replace(/\D/g, "") || null,
         patientSignatureOnFile: clean(payload.patientSignatureOnFile) || "Y",
@@ -1573,6 +1741,10 @@ export async function POST(request: Request) {
       if (claim.autoAccidentRelated === "Y" && !/^[A-Z]{2}$/.test(claim.autoAccidentState || "")) {
         issues.push({ severity: "error", field: "Auto accident state", box: "10b", message: "An auto-accident claim requires a two-letter state code.", suggestion: "Enter the state where the accident occurred." });
       }
+      if (coverage[0]?.coverageType === "auto_pip") {
+        if (!coverage[0].propertyCasualtyClaimNumber) issues.push({ severity: "error", field: "PIP claim number", box: "11b", message: "PIP requires a property-casualty claim number.", suggestion: "Complete the PIP coverage record; PRACX maps it with qualifier Y4." });
+        if (!coverage[0].accidentDate) issues.push({ severity: "error", field: "Accident date", box: "15", message: "PIP requires an accident date.", suggestion: "Complete the PIP accident details; PRACX maps qualifier 439." });
+      }
       for (const [from, to, box, label] of [
         [claim.unableToWorkFrom, claim.unableToWorkTo, "16", "unable-to-work dates"],
         [claim.hospitalizationFrom, claim.hospitalizationTo, "18", "hospitalization dates"],
@@ -1633,13 +1805,14 @@ export async function POST(request: Request) {
       const [claim] = await db.select().from(claims).where(eq(claims.id, id)).limit(1);
       if (!claim) return Response.json({ error: "Claim not found." }, { status: 404 });
       if (claim.scrubberStatus !== "clean") return Response.json({ error: "Run the scrubber and resolve errors before submission." }, { status: 400 });
-      const [[patient], [provider], payerRows, lines] = await Promise.all([
+      const [[patient], [provider], payerRows, lines, coverageRows] = await Promise.all([
         db.select().from(patients).where(eq(patients.id, claim.patientId)).limit(1),
         db.select().from(providers).where(eq(providers.id, claim.providerId)).limit(1),
         claim.payerId ? db.select().from(payers).where(eq(payers.id, claim.payerId)).limit(1) : Promise.resolve([]),
         db.select().from(claimLines).where(eq(claimLines.claimId, id)),
+        claim.coverageId ? db.select().from(patientCoverages).where(eq(patientCoverages.id, claim.coverageId)).limit(1) : Promise.resolve([]),
       ]);
-      const content = claim837({ claim, patient, payer: payerRows[0] || null, provider, lines });
+      const content = claim837({ claim, patient, payer: payerRows[0] || null, provider, lines, coverage: coverageRows[0] || null });
       if (action === "submitClaim") {
         const trace = `CH${Date.now()}`;
         await db.update(claims).set({
