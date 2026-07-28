@@ -65,8 +65,8 @@ test("provides a full scheduler command center and guarded appointment actions",
     readFile(new URL("../app/api/operations/route.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(workspace, /Live clinic schedule/);
   assert.match(workspace, /Front desk flow/);
+  assert.doesNotMatch(workspace, /scheduler-hero/);
   assert.match(workspace, /All providers/);
   assert.match(workspace, /Day<\/button>/);
   assert.match(workspace, /Week<\/button>/);

@@ -2057,12 +2057,23 @@ form .patient-tab-panel {
   position: sticky;
   z-index: 5;
   top: 0;
+  min-height: 82px;
+  padding: 13px 28px;
+}
+
+.operations-topbar .eyebrow {
+  font-size: 10px;
+}
+
+.operations-topbar h1 {
+  margin-top: 3px;
+  font-size: 24px;
 }
 
 .operations-topbar p {
-  margin: 5px 0 0;
+  margin: 3px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .operations-content {
@@ -2166,7 +2177,6 @@ form .patient-tab-panel {
   gap: 14px;
 }
 
-.scheduler-hero,
 .scheduler-toolbar,
 .scheduler-calendar-card,
 .scheduler-agenda {
@@ -2175,41 +2185,6 @@ form .patient-tab-panel {
   box-shadow: 0 8px 26px rgba(20, 60, 50, 0.04);
 }
 
-.scheduler-hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 22px 24px;
-  border-radius: 15px;
-  background:
-    radial-gradient(circle at 88% 8%, rgba(122, 204, 174, 0.24), transparent 28%),
-    linear-gradient(135deg, #fff, #f3faf7);
-}
-
-.scheduler-hero h2 {
-  margin: 5px 0 5px;
-  color: #183f33;
-  font-family: Georgia, serif;
-  font-size: 25px;
-  font-weight: 500;
-}
-
-.scheduler-hero p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.scheduler-hero-actions,
-.scheduler-hero-actions > div {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.scheduler-hero-actions button,
-.scheduler-hero-actions input,
 .scheduler-toolbar select,
 .scheduler-search {
   min-height: 39px;
@@ -2219,20 +2194,6 @@ form .patient-tab-panel {
   color: #31564a;
   font-size: 12px;
   font-weight: 700;
-}
-
-.scheduler-hero-actions button {
-  padding: 0 12px;
-}
-
-.scheduler-hero-actions input {
-  padding: 0 10px;
-}
-
-.scheduler-hero-actions .scheduler-new-button {
-  border-color: var(--forest);
-  background: var(--forest);
-  color: #fff;
 }
 
 .scheduler-metric-grid {
@@ -2295,9 +2256,44 @@ form .patient-tab-panel {
 .scheduler-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 9px;
   padding: 10px;
   border-radius: 12px;
+}
+
+.scheduler-date-controls,
+.scheduler-date-controls > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.scheduler-date-controls {
+  margin-right: auto;
+}
+
+.scheduler-date-controls > strong {
+  min-width: 175px;
+  padding: 0 5px;
+  color: #294d41;
+  font-size: 12px;
+}
+
+.scheduler-date-controls button,
+.scheduler-date-controls input {
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid #d7e4de;
+  border-radius: 7px;
+  background: #fff;
+  color: #31564a;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.scheduler-date-controls input {
+  width: 128px;
 }
 
 .scheduler-view-switch {
@@ -3479,16 +3475,6 @@ form .patient-tab-panel {
 }
 
 @media (max-width: 1050px) {
-  .scheduler-hero {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .scheduler-hero-actions {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
   .scheduler-metric-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -3545,20 +3531,23 @@ form .patient-tab-panel {
 }
 
 @media (max-width: 760px) {
-  .scheduler-hero-actions,
   .scheduler-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .scheduler-hero-actions > div,
-  .scheduler-hero-actions .scheduler-new-button,
+  .scheduler-date-controls,
   .scheduler-toolbar select,
   .scheduler-search {
     width: 100%;
   }
 
-  .scheduler-hero-actions > div input {
+  .scheduler-date-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scheduler-date-controls > div input {
     flex: 1;
     min-width: 0;
   }

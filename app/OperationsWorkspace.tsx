@@ -921,11 +921,6 @@ function SchedulerWorkspace({ data, selectedDate, setSelectedDate, onNew, onResc
     : `${weekDays[0].toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${weekDays[6].toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
   return <div className="scheduler-workspace">
-    <section className="scheduler-hero">
-      <div><span className="eyebrow">Live clinic schedule</span><h2>{rangeLabel}</h2><p>Manage provider capacity, patient readiness and front-desk flow from one screen.</p></div>
-      <div className="scheduler-hero-actions"><button onClick={() => setSelectedDate(dateKey(new Date()))} type="button">Today</button><div><button aria-label="Previous period" onClick={() => moveDate(view === "day" ? -1 : -7)} type="button">←</button><input aria-label="Selected schedule date" onChange={(event) => setSelectedDate(event.target.value)} type="date" value={selectedDate} /><button aria-label="Next period" onClick={() => moveDate(view === "day" ? 1 : 7)} type="button">→</button></div><button className="scheduler-new-button" onClick={() => onNew(`${selectedDate}T09:00`)} type="button">＋ New appointment</button></div>
-    </section>
-
     <section className="scheduler-metric-grid">
       <article><span className="scheduler-metric-icon mint">PX</span><div><small>Appointments</small><strong>{activeAppointments.length}</strong><p>{visibleAppointments.filter((appointment) => value(appointment, "status") === "completed").length} completed</p></div></article>
       <article><span className="scheduler-metric-icon blue">✓</span><div><small>Eligibility ready</small><strong>{eligibilityReady}</strong><p>{visibleAppointments.length - eligibilityReady} need review</p></div></article>
@@ -934,6 +929,11 @@ function SchedulerWorkspace({ data, selectedDate, setSelectedDate, onNew, onResc
     </section>
 
     <section className="scheduler-toolbar">
+      <div className="scheduler-date-controls">
+        <strong>{rangeLabel}</strong>
+        <button onClick={() => setSelectedDate(dateKey(new Date()))} type="button">Today</button>
+        <div><button aria-label="Previous period" onClick={() => moveDate(view === "day" ? -1 : -7)} type="button">←</button><input aria-label="Selected schedule date" onChange={(event) => setSelectedDate(event.target.value)} type="date" value={selectedDate} /><button aria-label="Next period" onClick={() => moveDate(view === "day" ? 1 : 7)} type="button">→</button></div>
+      </div>
       <div className="scheduler-view-switch" role="tablist" aria-label="Schedule view"><button aria-selected={view === "day"} className={view === "day" ? "active" : ""} onClick={() => setView("day")} role="tab" type="button">Day</button><button aria-selected={view === "week"} className={view === "week" ? "active" : ""} onClick={() => setView("week")} role="tab" type="button">Week</button></div>
       <label className="scheduler-search"><span>⌕</span><input onChange={(event) => setAppointmentSearch(event.target.value)} placeholder="Search patient or visit" value={appointmentSearch} /></label>
       <select aria-label="Filter by provider" onChange={(event) => setProviderFilter(event.target.value)} value={providerFilter}><option value="">All providers</option>{data.providers.map((provider) => <option key={value(provider, "id")} value={value(provider, "id")}>{value(provider, "firstName")} {value(provider, "lastName")}</option>)}</select>
