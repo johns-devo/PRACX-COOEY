@@ -52,8 +52,11 @@ test("stores patient and insurance-card documents with durable metadata", async 
   assert.match(workspace, /patient_photo/);
   assert.match(workspace, /HCFA \/ CMS-1500/);
   assert.match(workspace, /Primary EOB/);
-  assert.match(workspace, /Existing insurance and history/);
+  assert.match(workspace, /Insurance cards & coverage history/);
   assert.match(workspace, /Edit \/ end policy/);
+  assert.match(workspace, /Insurance cards & coverage history/);
+  assert.match(workspace, /insurance-card-viewer/);
+  assert.match(workspace, /Upload card images/);
   assert.match(documentApi, /MAX_FILE_SIZE = 12 \* 1024 \* 1024/);
   assert.match(documentApi, /patientDocuments/);
   assert.match(documentApi, /Cache-Control": "private, no-store"/);

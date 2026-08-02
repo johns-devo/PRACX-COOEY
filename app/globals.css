@@ -1420,29 +1420,221 @@ form .patient-tab-panel {
 }
 
 .existing-coverage-cards article {
-  display: grid;
-  flex: 0 0 260px;
-  gap: 4px;
-  padding: 10px 12px;
+  flex: 0 0 286px;
+  overflow: hidden;
   border: 1px solid #dbe7e2;
-  border-radius: 9px;
+  border-radius: 12px;
   background: white;
 }
 
-.existing-coverage-cards article span {
+.insurance-card-preview {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 150px;
+  padding: 15px;
+  place-content: center;
+  border: 0;
+  border-bottom: 1px solid #e1ebe7;
+  border-radius: 0;
+  background-color: #eef7f3;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  color: #39705d;
+  text-align: center;
+}
+
+.insurance-card-preview.missing-scan {
+  background: linear-gradient(145deg, #f7fbf9, #e9f4ef);
+}
+
+.insurance-card-preview > span {
+  font-size: 24px;
+}
+
+.insurance-card-preview > strong,
+.insurance-card-preview > small {
+  display: block;
+}
+
+.insurance-card-preview > strong {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.insurance-card-preview > small {
+  margin-top: 3px;
+  color: #71847c;
+  font-size: 10px;
+}
+
+.insurance-card-preview > b {
+  position: absolute;
+  right: 8px;
+  bottom: 7px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(19, 61, 48, 0.82);
+  color: #fff;
+  font-size: 8px;
+  letter-spacing: 0.02em;
+}
+
+.insurance-card-caption {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px 12px;
+}
+
+.insurance-card-caption span {
   color: #287257;
   font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
-.existing-coverage-cards article strong {
+.insurance-card-caption strong {
   font-size: 12px;
 }
 
-.existing-coverage-cards article small {
+.insurance-card-caption small {
   color: var(--muted);
   font-size: 11px;
+}
+
+.insurance-card-viewer-backdrop {
+  position: fixed;
+  z-index: 70;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgba(10, 28, 22, 0.72);
+  backdrop-filter: blur(5px);
+}
+
+.insurance-card-viewer {
+  width: min(780px, 100%);
+  overflow: hidden;
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(3, 20, 14, 0.35);
+}
+
+.insurance-card-viewer header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 17px 20px 14px;
+  border-bottom: 1px solid #e2ebe7;
+}
+
+.insurance-card-viewer header div,
+.insurance-card-viewer header strong,
+.insurance-card-viewer header small {
+  display: grid;
+  gap: 3px;
+}
+
+.insurance-card-viewer header span {
+  color: #287257;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.insurance-card-viewer header small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.insurance-card-viewer header > button {
+  border: 0;
+  background: transparent;
+  color: #617069;
+  font-size: 25px;
+}
+
+.insurance-card-side-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e2ebe7;
+  background: #f8fbfa;
+}
+
+.insurance-card-side-tabs button {
+  min-width: 86px;
+  min-height: 34px;
+  border: 1px solid #d6e4de;
+  border-radius: 8px;
+  background: #fff;
+  color: #60716a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.insurance-card-side-tabs button.active {
+  border-color: #7ebba3;
+  background: #eaf6f1;
+  color: #1e674d;
+}
+
+.insurance-card-large-view {
+  display: grid;
+  min-height: min(470px, 65vh);
+  padding: 18px;
+  place-items: center;
+  background: #eef3f1;
+}
+
+.insurance-card-large-image,
+.insurance-card-large-view iframe {
+  width: 100%;
+  height: min(430px, 60vh);
+  border: 0;
+  border-radius: 10px;
+  background-color: #fff;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  box-shadow: 0 7px 24px rgba(19, 50, 40, 0.12);
+}
+
+.insurance-card-missing-side {
+  max-width: 360px;
+  color: #52635c;
+  text-align: center;
+}
+
+.insurance-card-missing-side > span {
+  font-size: 38px;
+}
+
+.insurance-card-missing-side strong {
+  display: block;
+  margin-top: 8px;
+  color: #2b4138;
+  font-size: 16px;
+}
+
+.insurance-card-missing-side p {
+  margin: 6px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.insurance-card-missing-side button {
+  min-height: 38px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--forest);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .document-capture-grid {
