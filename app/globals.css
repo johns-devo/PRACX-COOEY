@@ -1503,6 +1503,50 @@ form .patient-tab-panel {
   font-size: 11px;
 }
 
+.insurance-card-capture-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  padding: 0 12px 12px;
+}
+
+.insurance-card-capture-actions label,
+.insurance-card-missing-actions label {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #a9d5c4;
+  border-radius: 8px;
+  background: #edf8f3;
+  color: #1d654c;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.insurance-card-capture-actions label:hover,
+.insurance-card-missing-actions label:hover {
+  border-color: #61ad8f;
+  background: #e2f4ec;
+}
+
+.insurance-card-capture-actions label.disabled,
+.insurance-card-missing-actions label.disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.insurance-card-capture-actions input,
+.insurance-card-missing-actions input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
 .insurance-card-viewer-backdrop {
   position: fixed;
   z-index: 70;
@@ -1626,9 +1670,19 @@ form .patient-tab-panel {
   font-size: 12px;
 }
 
+.insurance-card-missing-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.insurance-card-missing-actions label,
 .insurance-card-missing-side button {
   min-height: 38px;
   padding: 0 13px;
+}
+
+.insurance-card-missing-side button {
   border: 0;
   border-radius: 8px;
   background: var(--forest);

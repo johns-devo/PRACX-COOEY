@@ -56,7 +56,11 @@ test("stores patient and insurance-card documents with durable metadata", async 
   assert.match(workspace, /Edit \/ end policy/);
   assert.match(workspace, /Insurance cards & coverage history/);
   assert.match(workspace, /insurance-card-viewer/);
-  assert.match(workspace, /Upload card images/);
+  assert.match(workspace, /Capture insurance card/);
+  assert.match(workspace, /uploadInsuranceCardSide/);
+  assert.match(workspace, /documentReturnDraft/);
+  assert.match(workspace, /Returned to the patient’s Insurance section/);
+  assert.match(workspace, /Upload both sides/);
   assert.match(documentApi, /MAX_FILE_SIZE = 12 \* 1024 \* 1024/);
   assert.match(documentApi, /patientDocuments/);
   assert.match(documentApi, /Cache-Control": "private, no-store"/);
