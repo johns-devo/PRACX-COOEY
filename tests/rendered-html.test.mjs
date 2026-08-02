@@ -47,6 +47,9 @@ test("stores patient and insurance-card documents with durable metadata", async 
   assert.match(workspace, /Front of card/);
   assert.match(workspace, /Back of card/);
   assert.match(workspace, /capture="environment"/);
+  assert.match(workspace, /patient-placeholder\.png/);
+  assert.match(workspace, /patient-camera-button/);
+  assert.match(workspace, /patient_photo/);
   assert.match(workspace, /HCFA \/ CMS-1500/);
   assert.match(workspace, /Primary EOB/);
   assert.match(workspace, /Existing insurance and history/);

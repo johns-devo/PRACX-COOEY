@@ -309,6 +309,28 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     setModalOpen(true);
   }
 
+  async function uploadPatientPhoto(patientId: string, file: File) {
+    if (!patientId || !file) return;
+    const upload = new FormData();
+    upload.set("patientId", patientId);
+    upload.set("category", "patient_photo");
+    upload.set("title", "Patient profile photo");
+    upload.set("document", file);
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/patient-documents", { method: "POST", body: upload });
+      const body = (await response.json()) as Record<string, unknown>;
+      if (!response.ok) throw new Error(String(body.error || "Unable to save patient photo."));
+      await loadData();
+      setNotice("Patient photo saved to the chart and document history.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save patient photo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function action(actionName: string, payload: Record<string, unknown> = {}) {
     setSaving(true);
     setError("");
@@ -803,8 +825,8 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
           <section aria-labelledby="operations-modal-title" aria-modal="true" className={`modal provider-modal ${module === "patients" || formMode === "quick-patient" ? "patient-modal" : ""}`} role="dialog">
             <div className="modal-header"><div><span className="eyebrow">{meta.eyebrow}</span><h2 id="operations-modal-title">{modalTitle(module, formMode)}</h2><p>Required fields are marked. Claim-related fields include CMS-1500 guidance.</p></div><button aria-label="Close dialog" className="close-button" onClick={() => setModalOpen(false)} type="button">×</button></div>
             <form onSubmit={submitForm}>
-              {module === "patients" && (formMode === "documents" ? <PatientDocumentsForm data={data} form={form} update={updateField} /> : formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm data={data} form={form} update={updateField} />)}
-              {module === "scheduler" && (formMode === "quick-patient" ? <PatientForm data={data} form={form} update={updateField} /> : <AppointmentForm data={data} form={form} onAddPatient={addPatientFromAppointment} update={updateField} reschedule={formMode === "reschedule"} />)}
+              {module === "patients" && (formMode === "documents" ? <PatientDocumentsForm data={data} form={form} update={updateField} /> : formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm data={data} form={form} onPhotoUpload={uploadPatientPhoto} photoSaving={isSaving} update={updateField} />)}
+              {module === "scheduler" && (formMode === "quick-patient" ? <PatientForm data={data} form={form} onPhotoUpload={uploadPatientPhoto} photoSaving={isSaving} update={updateField} /> : <AppointmentForm data={data} form={form} onAddPatient={addPatientFromAppointment} update={updateField} reschedule={formMode === "reschedule"} />)}
               {module === "eligibility" && <EligibilityForm data={data} form={form} update={updateField} />}
               {module === "clinical" && <EncounterForm data={data} form={form} update={updateField} />}
               {module === "claims" && (formMode === "reconsideration" ? <ReconsiderationForm form={form} update={updateField} /> : <ClaimForm data={data} form={form} update={updateField} />)}
@@ -969,6 +991,7 @@ function SchedulerWorkspace({ data, selectedDate, setSelectedDate, onNew, onResc
 }
 
 const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
+  patient_photo: "Patient photo",
   insurance_card: "Insurance card",
   hcfa_form: "HCFA / CMS-1500",
   medical_record: "Medical record",
@@ -1331,7 +1354,7 @@ function PatientDocumentsForm({ data, form, update }: FormProps) {
   </div>;
 }
 
-function PatientForm({ data, form, update }: FormProps) {
+function PatientForm({ data, form, update, onPhotoUpload, photoSaving }: FormProps & { onPhotoUpload: (patientId: string, file: File) => Promise<void>; photoSaving: boolean }) {
   const [activeTab, setActiveTab] = useState<"demographics" | "contact" | "insurance" | "subscriber">("demographics");
   const [addressStatus, setAddressStatus] = useState<"idle" | "checking" | "verified" | "corrected" | "error">("idle");
   const [addressMessage, setAddressMessage] = useState("");
@@ -1387,12 +1410,22 @@ function PatientForm({ data, form, update }: FormProps) {
     { id: "subscriber" as const, number: "04", label: "Subscriber", complete: Boolean(form.subscriberFirstName || form.relationship === "self") },
   ];
   const activeTabIndex = tabs.findIndex((tab) => tab.id === activeTab);
-  const initials = `${String(form.firstName || "")[0] || ""}${String(form.lastName || "")[0] || ""}`.toUpperCase() || "PX";
+  const patientId = String(form.id || "");
+  const currentPhoto = data.patientDocuments
+    .filter((document) => value(document, "patientId") === patientId && value(document, "category") === "patient_photo" && value(document, "status") === "active")
+    .sort((left, right) => value(right, "createdAt").localeCompare(value(left, "createdAt")))[0];
+  const photoUrl = currentPhoto ? `/api/patient-documents?id=${encodeURIComponent(value(currentPhoto, "id"))}` : "/patient-placeholder.png";
 
   return (
     <div className="patient-editor">
       <aside className="patient-editor-summary">
-        <span className="patient-editor-avatar">{initials}</span>
+        <div className="patient-photo-control">
+          <span aria-label={currentPhoto ? "Current patient photo" : "Fictional default patient placeholder"} className="patient-editor-photo" role="img" style={{ backgroundImage: `url(${photoUrl})` }} />
+          <label aria-label="Capture or upload patient photo" className={`patient-camera-button ${!patientId || photoSaving ? "disabled" : ""}`} title={patientId ? "Take or upload patient photo" : "Save the patient before adding a photo"}>
+            <span aria-hidden="true">📷</span>
+            <input accept="image/jpeg,image/png,image/webp" capture="environment" disabled={!patientId || photoSaving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void onPhotoUpload(patientId, file); event.currentTarget.value = ""; }} type="file" />
+          </label>
+        </div>
         <span className="eyebrow">Patient record</span>
         <strong className="patient-editor-name">{form.firstName || form.lastName ? `${String(form.firstName || "")} ${String(form.lastName || "")}` : "New patient record"}</strong>
         <p>{form.memberId ? `Member ${String(form.memberId)}` : "Complete the sections to create a claim-ready patient master."}</p>

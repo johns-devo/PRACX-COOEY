@@ -21,6 +21,7 @@ type DocumentBucket = {
 };
 
 const DOCUMENT_CATEGORIES = new Set([
+  "patient_photo",
   "insurance_card",
   "hcfa_form",
   "medical_record",
@@ -150,6 +151,9 @@ export async function POST(request: Request) {
     for (const candidate of candidates) {
       const validationError = validateFile(candidate.file);
       if (validationError) return Response.json({ error: validationError }, { status: 400 });
+      if (category === "patient_photo" && !candidate.file.type.startsWith("image/")) {
+        return Response.json({ error: "Patient photos must be JPG, PNG or WebP images." }, { status: 400 });
+      }
     }
 
     const bucket = documentsBucket();

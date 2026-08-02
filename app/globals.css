@@ -758,19 +758,54 @@ form legend {
     linear-gradient(155deg, #f4faf7, #edf6f2);
 }
 
-.patient-editor-avatar {
-  display: grid;
-  width: 58px;
-  height: 58px;
+.patient-photo-control {
+  position: relative;
+  width: 104px;
+  height: 104px;
   margin-bottom: 20px;
-  place-items: center;
+}
+
+.patient-editor-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
   border: 1px solid #a6cdbd;
-  border-radius: 18px;
-  background: #fff;
+  border-radius: 28px;
+  background-color: #fff;
+  background-position: center;
+  background-size: cover;
   box-shadow: 0 8px 20px rgba(32, 80, 62, 0.08);
-  color: var(--forest);
-  font-family: Georgia, serif;
-  font-size: 20px;
+}
+
+.patient-camera-button {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 3px solid #f1f8f5;
+  border-radius: 50%;
+  background: var(--forest);
+  box-shadow: 0 5px 14px rgba(23, 82, 63, 0.24);
+  color: #fff;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.patient-camera-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.patient-camera-button.disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.65);
+  opacity: 0.5;
 }
 
 .patient-editor-summary .patient-editor-name {
