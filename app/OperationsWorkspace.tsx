@@ -168,7 +168,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
   const [schedulerDate, setSchedulerDate] = useState(new Date().toISOString().slice(0, 10));
   const [appointmentDraft, setAppointmentDraft] = useState<Record<string, string | boolean> | null>(null);
   const [documentReturnDraft, setDocumentReturnDraft] = useState<Record<string, string | boolean> | null>(null);
-  const [patientInitialTab, setPatientInitialTab] = useState<"demographics" | "contact" | "insurance" | "subscriber">("demographics");
+  const [patientInitialTab, setPatientInitialTab] = useState<"demographics" | "contact" | "insurance" | "subscriber" | "documents">("demographics");
 
   const loadData = useCallback(async () => {
     const response = await fetch("/api/operations");
@@ -296,10 +296,10 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
     setModalOpen(true);
   }
 
-  function openDocuments(patientId: string, coverageId = "", returnToInsurance = false) {
+  function openDocuments(patientId: string, coverageId = "", returnTab?: "insurance" | "documents") {
     const patient = data?.patients.find((item) => value(item, "id") === patientId);
-    setDocumentReturnDraft(returnToInsurance ? { ...form } : null);
-    if (returnToInsurance) setPatientInitialTab("insurance");
+    setDocumentReturnDraft(returnTab ? { ...form } : null);
+    if (returnTab) setPatientInitialTab(returnTab);
     setFormMode("documents");
     setForm({
       patientId,
@@ -401,9 +401,8 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
           setFormMode("edit-patient");
           setForm(documentReturnDraft);
           setDocumentReturnDraft(null);
-          setPatientInitialTab("insurance");
           setModalOpen(true);
-          setNotice(`${savedMessage} Returned to the patient’s Insurance section.`);
+          setNotice(`${savedMessage} Returned to the patient’s ${patientInitialTab === "documents" ? "Documents" : "Insurance"} section.`);
         } else {
           setModalOpen(false);
           setNotice(savedMessage);
@@ -864,7 +863,7 @@ export function OperationsWorkspace({ currentUser, module }: { currentUser: Loca
           <section aria-labelledby="operations-modal-title" aria-modal="true" className={`modal provider-modal ${module === "patients" || formMode === "quick-patient" ? "patient-modal" : ""}`} role="dialog">
             <div className="modal-header"><div><span className="eyebrow">{meta.eyebrow}</span><h2 id="operations-modal-title">{modalTitle(module, formMode)}</h2><p>Required fields are marked. Claim-related fields include CMS-1500 guidance.</p></div><button aria-label="Close dialog" className="close-button" onClick={() => setModalOpen(false)} type="button">×</button></div>
             <form onSubmit={submitForm}>
-              {module === "patients" && (formMode === "documents" ? <PatientDocumentsForm data={data} form={form} update={updateField} /> : formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm cardSaving={isSaving} data={data} form={form} initialTab={patientInitialTab} onCardCapture={uploadInsuranceCardSide} onCardUpload={(patientId, coverageId) => openDocuments(patientId, coverageId, true)} onPhotoUpload={uploadPatientPhoto} photoSaving={isSaving} update={updateField} />)}
+              {module === "patients" && (formMode === "documents" ? <PatientDocumentsForm data={data} form={form} update={updateField} /> : formMode === "eligibility-review" ? <EligibilityReviewForm review={eligibilityReview} form={form} update={updateField} /> : formMode === "responsibility" ? <ResponsibilityForm data={data} form={form} update={updateField} /> : formMode === "close-responsibility" ? <CloseResponsibilityForm form={form} update={updateField} /> : formMode === "coverage-order" ? <CoverageOrderForm data={data} form={form} update={updateField} /> : formMode === "coverage" ? <CoverageForm data={data} form={form} update={updateField} /> : <PatientForm cardSaving={isSaving} data={data} form={form} initialTab={patientInitialTab} onCardCapture={uploadInsuranceCardSide} onCardUpload={(patientId, coverageId) => openDocuments(patientId, coverageId, "insurance")} onDocumentUpload={(patientId) => openDocuments(patientId, "", "documents")} onPhotoUpload={uploadPatientPhoto} photoSaving={isSaving} update={updateField} />)}
               {module === "scheduler" && (formMode === "quick-patient" ? <PatientForm data={data} form={form} onPhotoUpload={uploadPatientPhoto} photoSaving={isSaving} update={updateField} /> : <AppointmentForm data={data} form={form} onAddPatient={addPatientFromAppointment} update={updateField} reschedule={formMode === "reschedule"} />)}
               {module === "eligibility" && <EligibilityForm data={data} form={form} update={updateField} />}
               {module === "clinical" && <EncounterForm data={data} form={form} update={updateField} />}
@@ -1040,6 +1039,13 @@ const DOCUMENT_CATEGORY_LABELS: Record<string, string> = {
   referral: "Referral",
   authorization: "Authorization",
   lab_result: "Lab result",
+  medication_list: "Medication list",
+  imaging_report: "Imaging report",
+  operative_report: "Operative report",
+  discharge_summary: "Hospital discharge summary",
+  specialist_note: "Specialist note",
+  pathology_report: "Pathology report",
+  immunization_record: "Immunization record",
   other: "Other document",
 };
 
@@ -1415,13 +1421,37 @@ function PatientDocumentsForm({ data, form, update }: FormProps) {
     {insuranceCard ? <fieldset><legend>Insurance member ID card</legend><p className="form-guidance">Capture or upload the front and back together. Each side is stored separately but linked to this exact coverage episode.</p><div className="document-capture-grid">
       <label><span>Front of card</span><strong>Take photo or upload front</strong><small>Place the full card inside the frame with all text readable.</small><input accept="image/jpeg,image/png,image/webp,application/pdf" capture="environment" name="front" type="file" /></label>
       <label><span>Back of card</span><strong>Take photo or upload back</strong><small>Include payer addresses, phone numbers and electronic IDs.</small><input accept="image/jpeg,image/png,image/webp,application/pdf" capture="environment" name="back" type="file" /></label>
-    </div></fieldset> : <fieldset><legend>Choose document</legend><label className="document-file-drop"><span>Upload {DOCUMENT_CATEGORY_LABELS[category] || "patient document"}</span><strong>Take a photo or choose a file</strong><small>The file will be available under Patient Documents after upload.</small><input accept="image/jpeg,image/png,image/webp,application/pdf" capture="environment" name="document" required type="file" /></label></fieldset>}
+    </div></fieldset> : <fieldset><legend>Capture or upload records</legend><p className="form-guidance">Take one photo now, or select multiple images and PDFs from the device. Every file is stored separately under this patient and document type.</p><div className="document-intake-choice-grid"><label className="document-file-drop camera"><span aria-hidden="true">📷</span><strong>Take a document photo</strong><small>Uses the rear camera on a phone or tablet.</small><input accept="image/jpeg,image/png,image/webp" capture="environment" name="document" type="file" /></label><label className="document-file-drop multiple"><span aria-hidden="true">＋</span><strong>Upload multiple files</strong><small>Select prior records, reports, images or PDFs together.</small><input accept="image/jpeg,image/png,image/webp,application/pdf" multiple name="documents" type="file" /></label></div></fieldset>}
     <div className="responsibility-rule-note"><strong>Patient record linkage</strong><span>Insurance cards appear on both the selected policy and the patient document library. Other files remain searchable under the patient and their selected category.</span></div>
   </div>;
 }
 
-function PatientForm({ data, form, update, onPhotoUpload, onCardUpload, onCardCapture, photoSaving, cardSaving = false, initialTab = "demographics" }: FormProps & { onPhotoUpload: (patientId: string, file: File) => Promise<void>; onCardUpload?: (patientId: string, coverageId: string) => void; onCardCapture?: (patientId: string, coverageId: string, side: "front" | "back", file: File) => Promise<void>; photoSaving: boolean; cardSaving?: boolean; initialTab?: "demographics" | "contact" | "insurance" | "subscriber" }) {
-  const [activeTab, setActiveTab] = useState<"demographics" | "contact" | "insurance" | "subscriber">(initialTab);
+function PatientClinicalDocuments({ data, patientId, onUpload }: { data: WorkspaceData; patientId: string; onUpload?: (patientId: string) => void }) {
+  const [reviewGateOpen, setReviewGateOpen] = useState(false);
+  const documents = data.patientDocuments
+    .filter((document) => value(document, "patientId") === patientId && value(document, "status") === "active" && !["patient_photo", "insurance_card"].includes(value(document, "category")))
+    .sort((left, right) => value(right, "createdAt").localeCompare(value(left, "createdAt")));
+  const clinicalDocuments = documents.filter((document) => !["hcfa_form", "primary_eob", "secondary_eob"].includes(value(document, "category")));
+  return <div className="patient-clinical-documents">
+    <section className="document-intake-banner"><div><span className="eyebrow">Historical record intake</span><h3>Previous medical documents</h3><p>Photograph records from a phone or tablet, or upload several images and PDFs from a desktop.</p></div><button disabled={!patientId} onClick={() => onUpload?.(patientId)} type="button"><span aria-hidden="true">📷</span> Capture or upload</button></section>
+    {!patientId ? <div className="document-empty-state"><strong>Save the patient first</strong><span>Document capture becomes available after the patient chart has an account number.</span></div> : documents.length ? <div className="clinical-document-grid">{documents.map((document) => <a href={`/api/patient-documents?id=${encodeURIComponent(value(document, "id"))}`} key={value(document, "id")} rel="noreferrer" target="_blank"><span>{value(document, "contentType") === "application/pdf" ? "PDF" : "IMAGE"}</span><div><strong>{value(document, "title")}</strong><small>{DOCUMENT_CATEGORY_LABELS[value(document, "category")] || value(document, "category").replaceAll("_", " ")}</small><small>{value(document, "serviceDate") ? `Record date ${shortDate(value(document, "serviceDate"))}` : `Uploaded ${shortDate(value(document, "createdAt"))}`}</small></div><b>Open ↗</b></a>)}</div> : <div className="document-empty-state"><strong>No previous records uploaded</strong><span>Ask the patient for discharge summaries, medication lists, specialist notes, test results and imaging reports.</span></div>}
+    <section className="clinical-ai-heads-up"><header><div><span className="eyebrow">Provider clinical heads-up</span><h3>AI-assisted historical record review</h3><p>{clinicalDocuments.length} clinical source{clinicalDocuments.length === 1 ? "" : "s"} ready for evidence-linked review.</p></div><Status value={clinicalDocuments.length ? "ready" : "needs_sources"} /></header>
+      <div className="clinical-ai-review-grid">{[
+        ["Urgent attention", "Potential red flags and time-sensitive follow-up"],
+        ["Conditions & history", "Prior diagnoses, procedures and hospitalizations"],
+        ["Medications & allergies", "Reconciliation candidates and documented reactions"],
+        ["Results & trends", "Labs, imaging and pathology requiring comparison"],
+        ["Care gaps", "Missing records and questions for today’s visit"],
+        ["Clinical opportunities", "Provider-reviewed follow-up to consider—not automatic billing"],
+      ].map(([title, description]) => <article key={title}><span>Pending review</span><strong>{title}</strong><p>{description}</p></article>)}</div>
+      <div className="clinical-ai-actions"><button disabled={!clinicalDocuments.length} onClick={() => setReviewGateOpen(true)} type="button">Generate clinical heads-up</button><p>Every finding must cite its source document and page. The treating clinician confirms accuracy, medical necessity and the care plan.</p></div>
+      {reviewGateOpen && <div className="clinical-ai-gate" role="status"><strong>Secure medical-AI connection required</strong><p>PRACX has not transmitted these records. An administrator must activate an approved clinical-document AI service with a BAA, PHI controls, audit logging and clinician-review policy before analysis can run.</p><button onClick={() => setReviewGateOpen(false)} type="button">Understood</button></div>}
+    </section>
+  </div>;
+}
+
+function PatientForm({ data, form, update, onPhotoUpload, onCardUpload, onCardCapture, onDocumentUpload, photoSaving, cardSaving = false, initialTab = "demographics" }: FormProps & { onPhotoUpload: (patientId: string, file: File) => Promise<void>; onCardUpload?: (patientId: string, coverageId: string) => void; onCardCapture?: (patientId: string, coverageId: string, side: "front" | "back", file: File) => Promise<void>; onDocumentUpload?: (patientId: string) => void; photoSaving: boolean; cardSaving?: boolean; initialTab?: "demographics" | "contact" | "insurance" | "subscriber" | "documents" }) {
+  const [activeTab, setActiveTab] = useState<"demographics" | "contact" | "insurance" | "subscriber" | "documents">(initialTab);
   const [addressStatus, setAddressStatus] = useState<"idle" | "checking" | "verified" | "corrected" | "error">("idle");
   const [addressMessage, setAddressMessage] = useState("");
   const [addressSuggestion, setAddressSuggestion] = useState<DataRow | null>(null);
@@ -1474,6 +1504,7 @@ function PatientForm({ data, form, update, onPhotoUpload, onCardUpload, onCardCa
     { id: "contact" as const, number: "02", label: "Contact", complete: Boolean(form.addressLine1 && form.city && form.state && form.postalCode) },
     { id: "insurance" as const, number: "03", label: "Insurance", complete: Boolean(form.planId && form.memberId) },
     { id: "subscriber" as const, number: "04", label: "Subscriber", complete: Boolean(form.subscriberFirstName || form.relationship === "self") },
+    { id: "documents" as const, number: "05", label: "Documents", complete: data.patientDocuments.some((document) => value(document, "patientId") === String(form.id || "") && value(document, "status") === "active" && !["patient_photo", "insurance_card"].includes(value(document, "category"))) },
   ];
   const activeTabIndex = tabs.findIndex((tab) => tab.id === activeTab);
   const patientId = String(form.id || "");
@@ -1543,6 +1574,8 @@ function PatientForm({ data, form, update, onPhotoUpload, onCardUpload, onCardCa
         </fieldset>}
 
         {activeTab === "subscriber" && <fieldset className="patient-tab-panel"><legend>Subscriber & verification</legend>{["lop", "attorney", "self_pay", "other_responsibility"].includes(String(form.coverageType || "")) ? <p className="patient-section-copy">This responsibility type does not create an insurance subscriber or eligibility inquiry.</p> : <><p className="patient-section-copy">Confirm whether the patient is the policy subscriber. Manual subscriber fields appear only when they are different.</p><SubscriberFields form={form} update={update} /><div className="eligibility-option"><Check label="Verify eligibility immediately after saving" name="verifyEligibility" form={form} update={update} /><p>PRACX sends a 270 inquiry and fills the returned payer, plan, coverage dates and benefit details. Live responses require an active eligibility adapter.</p></div></>}</fieldset>}
+
+        {activeTab === "documents" && <fieldset className="patient-tab-panel patient-documents-panel"><legend>Documents & clinical review</legend><PatientClinicalDocuments data={data} onUpload={onDocumentUpload} patientId={String(form.id || "")} /></fieldset>}
 
         <div className="patient-tab-navigation">
           <button disabled={activeTabIndex === 0} onClick={() => setActiveTab(tabs[Math.max(0, activeTabIndex - 1)].id)} type="button">← Previous</button>

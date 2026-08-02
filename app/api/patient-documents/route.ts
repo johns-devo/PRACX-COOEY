@@ -31,6 +31,13 @@ const DOCUMENT_CATEGORIES = new Set([
   "referral",
   "authorization",
   "lab_result",
+  "medication_list",
+  "imaging_report",
+  "operative_report",
+  "discharge_summary",
+  "specialist_note",
+  "pathology_report",
+  "immunization_record",
   "other",
 ]);
 const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
@@ -145,6 +152,9 @@ export async function POST(request: Request) {
     } else {
       const document = formData.get("document");
       if (document instanceof File && document.size) candidates.push({ file: document, side: "none" });
+      for (const file of formData.getAll("documents")) {
+        if (file instanceof File && file.size) candidates.push({ file, side: "none" });
+      }
     }
     if (!candidates.length) return Response.json({ error: "Choose at least one file to upload." }, { status: 400 });
 

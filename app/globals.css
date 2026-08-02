@@ -1697,6 +1697,228 @@ form .patient-tab-panel {
   gap: 12px;
 }
 
+.document-intake-choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.document-intake-choice-grid .document-file-drop {
+  cursor: pointer;
+}
+
+.document-intake-choice-grid .document-file-drop:hover {
+  border-color: #4fa986;
+  background: #ecf8f3;
+}
+
+.patient-documents-panel {
+  background: #f7faf9;
+}
+
+.patient-clinical-documents {
+  display: grid;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.document-intake-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border: 1px solid #cfe5dc;
+  border-radius: 13px;
+  background: linear-gradient(120deg, #fff 0%, #edf8f3 100%);
+}
+
+.document-intake-banner h3,
+.clinical-ai-heads-up h3 {
+  margin: 4px 0;
+  color: #243c32;
+  font-family: Georgia, serif;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.document-intake-banner p,
+.clinical-ai-heads-up header p {
+  margin: 0;
+  color: #6d7d76;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.document-intake-banner button {
+  min-width: 168px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--forest);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.clinical-document-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.clinical-document-grid a {
+  display: grid;
+  grid-template-columns: 46px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid #dce8e3;
+  border-radius: 10px;
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+}
+
+.clinical-document-grid a > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 8px;
+  background: #eaf6f1;
+  color: #267055;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.clinical-document-grid a > div,
+.clinical-document-grid a strong,
+.clinical-document-grid a small {
+  display: grid;
+  gap: 2px;
+}
+
+.clinical-document-grid a strong {
+  color: #30443b;
+  font-size: 12px;
+}
+
+.clinical-document-grid a small,
+.clinical-document-grid a > b {
+  color: #7d8c86;
+  font-size: 10px;
+}
+
+.document-empty-state {
+  display: grid;
+  gap: 4px;
+  padding: 18px;
+  border: 1px dashed #c9d9d3;
+  border-radius: 11px;
+  color: #71817b;
+  text-align: center;
+}
+
+.document-empty-state strong {
+  color: #42564d;
+}
+
+.clinical-ai-heads-up {
+  padding: 18px;
+  border: 1px solid #d8e3df;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.clinical-ai-heads-up > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.clinical-ai-review-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.clinical-ai-review-grid article {
+  min-height: 105px;
+  padding: 12px;
+  border: 1px solid #e1e9e6;
+  border-radius: 9px;
+  background: #fafcfb;
+}
+
+.clinical-ai-review-grid span {
+  color: #9a7a32;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.clinical-ai-review-grid strong {
+  display: block;
+  margin-top: 7px;
+  color: #344940;
+  font-size: 12px;
+}
+
+.clinical-ai-review-grid p {
+  margin: 5px 0 0;
+  color: #77867f;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.clinical-ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid #e3ebe8;
+}
+
+.clinical-ai-actions button,
+.clinical-ai-gate button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 8px;
+  background: #165f49;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.clinical-ai-actions p {
+  margin: 0;
+  color: #75847e;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.clinical-ai-gate {
+  margin-top: 12px;
+  padding: 13px 14px;
+  border-left: 3px solid #e1a931;
+  border-radius: 7px;
+  background: #fff8e8;
+  color: #644f24;
+}
+
+.clinical-ai-gate p {
+  margin: 5px 0 10px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .document-capture-grid label,
 .document-file-drop {
   display: grid;
@@ -4257,5 +4479,23 @@ form .patient-tab-panel {
 
   .topbar .primary-button span {
     display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .document-intake-choice-grid,
+  .clinical-document-grid,
+  .clinical-ai-review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .document-intake-banner,
+  .clinical-ai-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .document-intake-banner button {
+    width: 100%;
   }
 }
