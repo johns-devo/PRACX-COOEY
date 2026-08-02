@@ -1875,6 +1875,86 @@ form .patient-tab-panel {
   line-height: 1.45;
 }
 
+.clinical-review-start {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px;
+  border: 1px dashed #a9cfbf;
+  border-radius: 10px;
+  background: #f4faf7;
+}
+
+.clinical-review-start strong {
+  color: #31483e;
+  font-size: 13px;
+}
+
+.clinical-review-start p {
+  max-width: 650px;
+  margin: 5px 0 0;
+  color: #6f8079;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.clinical-review-start button {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 8px;
+  background: #165f49;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.clinical-review-mode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 11px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #edf6f2;
+  color: #48645a;
+  font-size: 10px;
+}
+
+.clinical-review-mode strong {
+  flex: 0 0 auto;
+  color: #1e6a4f;
+  text-transform: uppercase;
+}
+
+.clinical-review-sources {
+  display: grid;
+  gap: 3px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid #e3ebe8;
+}
+
+.clinical-review-sources a {
+  overflow: hidden;
+  color: #1f7154;
+  font-size: 9px;
+  font-weight: 750;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clinical-source-missing {
+  display: block;
+  margin-top: 9px;
+  color: #a07243;
+  font-size: 9px;
+  font-weight: 750;
+}
+
 .clinical-ai-actions {
   display: flex;
   align-items: center;
@@ -1895,6 +1975,16 @@ form .patient-tab-panel {
   color: #fff;
   font-size: 11px;
   font-weight: 800;
+}
+
+.clinical-ai-actions button.reviewed {
+  background: #26775a;
+}
+
+.clinical-ai-actions button.secondary {
+  border: 1px solid #c9dcd4;
+  background: #fff;
+  color: #486259;
 }
 
 .clinical-ai-actions p {
@@ -4490,6 +4580,7 @@ form .patient-tab-panel {
   }
 
   .document-intake-banner,
+  .clinical-review-start,
   .clinical-ai-actions {
     align-items: stretch;
     flex-direction: column;

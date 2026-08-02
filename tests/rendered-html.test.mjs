@@ -63,9 +63,12 @@ test("stores patient and insurance-card documents with durable metadata", async 
   assert.match(workspace, /Upload both sides/);
   assert.match(workspace, /Previous medical documents/);
   assert.match(workspace, /Upload multiple files/);
-  assert.match(workspace, /AI-assisted historical record review/);
-  assert.match(workspace, /Every finding must cite its source document and page/);
-  assert.match(workspace, /Secure medical-AI connection required/);
+  assert.match(workspace, /Historical record review packet/);
+  assert.match(workspace, /Every clinical conclusion still requires source verification/);
+  assert.doesNotMatch(workspace, /Secure medical-AI connection required/);
+  assert.match(workspace, /Local intake analysis/);
+  assert.match(workspace, /Mark clinician reviewed/);
+  assert.match(workspace, /No unsupported diagnosis or content extraction is claimed/);
   assert.match(documentApi, /formData\.getAll\("documents"\)/);
   assert.match(documentApi, /MAX_FILE_SIZE = 12 \* 1024 \* 1024/);
   assert.match(documentApi, /patientDocuments/);
