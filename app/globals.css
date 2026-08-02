@@ -1831,6 +1831,210 @@ form .patient-tab-panel {
   background: #fff;
 }
 
+.lab-ai-analyzer {
+  padding: 18px;
+  border: 1px solid #cbded7;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.lab-ai-analyzer > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.lab-ai-analyzer h3 {
+  margin: 4px 0;
+  color: #243c32;
+  font-family: Georgia, serif;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.lab-ai-analyzer header p {
+  margin: 0;
+  color: #6d7d76;
+  font-size: 11px;
+}
+
+.lab-analysis-controls {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f2f8f5;
+}
+
+.lab-analysis-controls label {
+  display: grid;
+  gap: 5px;
+  color: #53675e;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.lab-analysis-controls select {
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid #cbded6;
+  border-radius: 8px;
+  background: #fff;
+  color: #263c33;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.lab-analysis-controls button {
+  min-height: 40px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 8px;
+  background: #145e48;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.lab-analysis-error {
+  margin: 10px 0 0;
+}
+
+.lab-analysis-result {
+  display: grid;
+  gap: 12px;
+  margin-top: 13px;
+}
+
+.lab-analysis-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #dce8e3;
+  border-radius: 9px;
+  background: #fbfdfc;
+}
+
+.lab-analysis-summary span {
+  color: #277157;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.lab-analysis-summary strong {
+  display: block;
+  margin-top: 4px;
+  color: #2f453b;
+  font-size: 13px;
+}
+
+.lab-analysis-summary p {
+  margin: 4px 0 0;
+  color: #687a72;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.lab-analysis-summary a,
+.lab-results-table a {
+  flex: 0 0 auto;
+  color: #176c50;
+  font-size: 10px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.lab-urgent-findings {
+  padding: 12px 14px;
+  border-left: 4px solid #c33f3f;
+  border-radius: 7px;
+  background: #fff1f1;
+  color: #783333;
+}
+
+.lab-urgent-findings p {
+  margin: 5px 0 0;
+  font-size: 11px;
+}
+
+.lab-results-table {
+  overflow-x: auto;
+  border: 1px solid #dce7e3;
+  border-radius: 9px;
+}
+
+.lab-results-table table {
+  min-width: 720px;
+  margin: 0;
+}
+
+.lab-results-table th,
+.lab-results-table td {
+  padding: 10px 11px;
+  font-size: 10px;
+  vertical-align: top;
+}
+
+.lab-results-table td strong,
+.lab-results-table td small {
+  display: block;
+}
+
+.lab-results-table td small {
+  max-width: 260px;
+  margin-top: 2px;
+  color: #7f8e88;
+  font-size: 9px;
+}
+
+.lab-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lab-insight-grid article {
+  padding: 12px;
+  border: 1px solid #e0e9e5;
+  border-radius: 9px;
+  background: #fafcfb;
+}
+
+.lab-insight-grid strong {
+  color: #344940;
+  font-size: 11px;
+}
+
+.lab-insight-grid p {
+  margin: 5px 0 0;
+  color: #73827c;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.lab-clinician-warning {
+  display: flex;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff7e4;
+  color: #69562c;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.lab-clinician-warning strong {
+  flex: 0 0 auto;
+}
+
 .clinical-ai-heads-up > header {
   display: flex;
   align-items: flex-start;
@@ -4575,13 +4779,17 @@ form .patient-tab-panel {
 @media (max-width: 760px) {
   .document-intake-choice-grid,
   .clinical-document-grid,
-  .clinical-ai-review-grid {
+  .clinical-ai-review-grid,
+  .lab-analysis-controls,
+  .lab-insight-grid {
     grid-template-columns: 1fr;
   }
 
   .document-intake-banner,
   .clinical-review-start,
-  .clinical-ai-actions {
+  .clinical-ai-actions,
+  .lab-analysis-summary,
+  .lab-clinician-warning {
     align-items: stretch;
     flex-direction: column;
   }

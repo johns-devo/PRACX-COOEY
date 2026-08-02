@@ -1429,6 +1429,10 @@ function PatientDocumentsForm({ data, form, update }: FormProps) {
 function PatientClinicalDocuments({ data, patientId, onUpload }: { data: WorkspaceData; patientId: string; onUpload?: (patientId: string) => void }) {
   const [reviewGenerated, setReviewGenerated] = useState(false);
   const [clinicianReviewed, setClinicianReviewed] = useState(false);
+  const [selectedLabId, setSelectedLabId] = useState("");
+  const [labAnalysis, setLabAnalysis] = useState<DataRow | null>(null);
+  const [labAnalysisError, setLabAnalysisError] = useState("");
+  const [analyzingLab, setAnalyzingLab] = useState(false);
   const documents = data.patientDocuments
     .filter((document) => value(document, "patientId") === patientId && value(document, "status") === "active" && !["patient_photo", "insurance_card"].includes(value(document, "category")))
     .sort((left, right) => value(right, "createdAt").localeCompare(value(left, "createdAt")));
@@ -1437,10 +1441,44 @@ function PatientClinicalDocuments({ data, patientId, onUpload }: { data: Workspa
   const medicationSources = documentsFor("medication_list", "medical_record", "discharge_summary", "specialist_note");
   const resultSources = documentsFor("lab_result", "imaging_report", "pathology_report");
   const historySources = documentsFor("medical_record", "operative_report", "discharge_summary", "specialist_note", "accident_letter");
+  const labReports = documentsFor("lab_result", "pathology_report");
+  const activeLabId = selectedLabId || value(labReports[0] || {}, "id");
+  const activeLab = labReports.find((document) => value(document, "id") === activeLabId);
+  const storedLabAnalysis = (() => {
+    if (!activeLab || !value(activeLab, "analysisJson")) return null;
+    try { return JSON.parse(value(activeLab, "analysisJson")) as DataRow; } catch { return null; }
+  })();
+  const displayedLabAnalysis = labAnalysis && value(labAnalysis, "sourceDocumentId") === activeLabId ? labAnalysis : storedLabAnalysis;
   const sourceLinks = (sources: DataRow[]) => sources.length ? <div className="clinical-review-sources">{sources.slice(0, 3).map((document) => <a href={`/api/patient-documents?id=${encodeURIComponent(value(document, "id"))}`} key={value(document, "id")} rel="noreferrer" target="_blank">{value(document, "title")} ↗</a>)}</div> : <small className="clinical-source-missing">No matching source supplied</small>;
+
+  async function analyzeLabReport() {
+    if (!activeLabId) return;
+    setAnalyzingLab(true);
+    setLabAnalysisError("");
+    try {
+      const response = await fetch("/api/patient-lab-analysis", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documentId: activeLabId }) });
+      const body = (await response.json()) as DataRow;
+      if (!response.ok) throw new Error(value(body, "error") || "Unable to analyze this laboratory report.");
+      setLabAnalysis((body.analysis || null) as DataRow | null);
+    } catch (reason) {
+      setLabAnalysisError(reason instanceof Error ? reason.message : "Unable to analyze this laboratory report.");
+    } finally {
+      setAnalyzingLab(false);
+    }
+  }
   return <div className="patient-clinical-documents">
     <section className="document-intake-banner"><div><span className="eyebrow">Historical record intake</span><h3>Previous medical documents</h3><p>Photograph records from a phone or tablet, or upload several images and PDFs from a desktop.</p></div><button disabled={!patientId} onClick={() => onUpload?.(patientId)} type="button"><span aria-hidden="true">📷</span> Capture or upload</button></section>
     {!patientId ? <div className="document-empty-state"><strong>Save the patient first</strong><span>Document capture becomes available after the patient chart has an account number.</span></div> : documents.length ? <div className="clinical-document-grid">{documents.map((document) => <a href={`/api/patient-documents?id=${encodeURIComponent(value(document, "id"))}`} key={value(document, "id")} rel="noreferrer" target="_blank"><span>{value(document, "contentType") === "application/pdf" ? "PDF" : "IMAGE"}</span><div><strong>{value(document, "title")}</strong><small>{DOCUMENT_CATEGORY_LABELS[value(document, "category")] || value(document, "category").replaceAll("_", " ")}</small><small>{value(document, "serviceDate") ? `Record date ${shortDate(value(document, "serviceDate"))}` : `Uploaded ${shortDate(value(document, "createdAt"))}`}</small></div><b>Open ↗</b></a>)}</div> : <div className="document-empty-state"><strong>No previous records uploaded</strong><span>Ask the patient for discharge summaries, medication lists, specialist notes, test results and imaging reports.</span></div>}
+    <section className="lab-ai-analyzer"><header><div><span className="eyebrow">Multimodal laboratory intelligence</span><h3>Blood report analysis</h3><p>Reads the selected image or PDF, extracts exact values and flags report-supported abnormalities for clinician confirmation.</p></div><Status value={displayedLabAnalysis ? "analyzed" : labReports.length ? "ready" : "needs_report"} /></header>
+      {labReports.length ? <div className="lab-analysis-controls"><label>Laboratory report<select value={activeLabId} onChange={(event) => { setSelectedLabId(event.target.value); setLabAnalysis(null); setLabAnalysisError(""); }}>{labReports.map((document) => <option key={value(document, "id")} value={value(document, "id")}>{value(document, "title")} · {shortDate(value(document, "serviceDate") || value(document, "createdAt"))}</option>)}</select></label><button disabled={analyzingLab} onClick={analyzeLabReport} type="button">{analyzingLab ? "Reading report…" : displayedLabAnalysis ? "Reanalyze report" : "Analyze blood report"}</button></div> : <div className="document-empty-state compact"><strong>Add a lab result first</strong><span>Upload the blood report with Document type “Lab result,” then return here to analyze it.</span></div>}
+      {labAnalysisError && <div className="notice error lab-analysis-error">{labAnalysisError}</div>}
+      {displayedLabAnalysis && <div className="lab-analysis-result"><div className="lab-analysis-summary"><div><span>Report summary</span><strong>{value(displayedLabAnalysis, "reportType") || "Laboratory report"}</strong><p>{value(displayedLabAnalysis, "summary")}</p></div><a href={value(displayedLabAnalysis, "sourceUrl")} rel="noreferrer" target="_blank">Open source report ↗</a></div>
+        {Array.isArray(displayedLabAnalysis.urgentFindings) && displayedLabAnalysis.urgentFindings.length > 0 && <div className="lab-urgent-findings"><strong>Possible urgent findings—confirm against source</strong>{displayedLabAnalysis.urgentFindings.map((finding, index) => <p key={index}>{String(finding)}</p>)}</div>}
+        <div className="lab-results-table"><table><thead><tr><th>Test</th><th>Result</th><th>Reference range</th><th>Flag</th><th>Source</th></tr></thead><tbody>{Array.isArray(displayedLabAnalysis.results) && displayedLabAnalysis.results.map((result, index) => { const row = result as DataRow; return <tr key={`${value(row, "testName")}-${index}`}><td><strong>{value(row, "testName")}</strong><small>{value(row, "note")}</small></td><td>{value(row, "value")} {value(row, "unit")}</td><td>{value(row, "referenceRange") || "Not printed"}</td><td><Status value={value(row, "flag")} /></td><td><a href={value(displayedLabAnalysis, "sourceUrl")} rel="noreferrer" target="_blank">{value(row, "sourcePage") || "Report"} ↗</a></td></tr>; })}</tbody></table></div>
+        <div className="lab-insight-grid"><article><strong>Trend observations</strong>{Array.isArray(displayedLabAnalysis.trends) && displayedLabAnalysis.trends.length ? displayedLabAnalysis.trends.map((item, index) => <p key={index}>{String(item)}</p>) : <p>No longitudinal trend can be established from this report alone.</p>}</article><article><strong>Questions for clinician/patient</strong>{Array.isArray(displayedLabAnalysis.followUpQuestions) && displayedLabAnalysis.followUpQuestions.map((item, index) => <p key={index}>{String(item)}</p>)}</article><article><strong>Analysis limitations</strong>{Array.isArray(displayedLabAnalysis.limitations) && displayedLabAnalysis.limitations.map((item, index) => <p key={index}>{String(item)}</p>)}</article></div>
+        <div className="lab-clinician-warning"><strong>Clinical decision support only</strong><span>Confirm every value against the source report and clinical context. PRACX does not diagnose, prescribe, predict disease, or automatically order/code/bill services.</span></div>
+      </div>}
+    </section>
     <section className="clinical-ai-heads-up"><header><div><span className="eyebrow">Provider clinical heads-up</span><h3>Historical record review packet</h3><p>{clinicalDocuments.length} clinical source{clinicalDocuments.length === 1 ? "" : "s"} indexed for today’s review.</p></div><Status value={clinicianReviewed ? "reviewed" : reviewGenerated ? "draft" : clinicalDocuments.length ? "ready" : "needs_sources"} /></header>
       {!reviewGenerated ? <div className="clinical-review-start"><div><strong>Generate the workflow now</strong><p>PRACX will organize uploaded records, identify missing document groups and create source-linked clinician checklists. Content interpretation will become deeper when the approved AI adapter is connected later.</p></div><button disabled={!clinicalDocuments.length} onClick={() => { setReviewGenerated(true); setClinicianReviewed(false); }} type="button">Generate clinical heads-up</button></div> : <>
         <div className="clinical-review-mode"><strong>Local intake analysis</strong><span>Document inventory and review workflow are active now. No unsupported diagnosis or content extraction is claimed.</span></div>

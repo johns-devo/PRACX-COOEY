@@ -99,6 +99,13 @@
       "when": 1785255046163,
       "tag": "0013_next_wolverine",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1785659493054,
+      "tag": "0014_mighty_the_hand",
+      "breakpoints": true
     }
   ]
 }

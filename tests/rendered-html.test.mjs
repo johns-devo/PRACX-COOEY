@@ -34,10 +34,11 @@ test("upgrades legacy coverage and eligibility tables before saving new fields",
   );
 });
 
-test("stores patient and insurance-card documents with durable metadata", async () => {
-  const [workspace, documentApi, schema, migration, hosting] = await Promise.all([
+test("stores patient documents and analyzes laboratory reports with durable metadata", async () => {
+  const [workspace, documentApi, labApi, schema, migration, hosting] = await Promise.all([
     readFile(new URL("../app/OperationsWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/patient-documents/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/patient-lab-analysis/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0013_next_wolverine.sql", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
@@ -69,11 +70,21 @@ test("stores patient and insurance-card documents with durable metadata", async 
   assert.match(workspace, /Local intake analysis/);
   assert.match(workspace, /Mark clinician reviewed/);
   assert.match(workspace, /No unsupported diagnosis or content extraction is claimed/);
+  assert.match(workspace, /Blood report analysis/);
+  assert.match(workspace, /Analyze blood report/);
+  assert.match(workspace, /Possible urgent findings—confirm against source/);
   assert.match(documentApi, /formData\.getAll\("documents"\)/);
   assert.match(documentApi, /MAX_FILE_SIZE = 12 \* 1024 \* 1024/);
   assert.match(documentApi, /patientDocuments/);
   assert.match(documentApi, /Cache-Control": "private, no-store"/);
+  assert.match(labApi, /https:\/\/api\.openai\.com\/v1\/responses/);
+  assert.match(labApi, /detail: "original"/);
+  assert.match(labApi, /store: false/);
+  assert.match(labApi, /json_schema/);
+  assert.match(labApi, /Never diagnose, prescribe, predict disease/);
+  assert.match(labApi, /analysisJson: JSON\.stringify/);
   assert.match(schema, /export const patientDocuments/);
+  assert.match(schema, /analysisJson: text\("analysis_json"\)/);
   assert.match(migration, /CREATE TABLE `patient_documents`/);
   assert.match(hosting, /"r2": "DOCUMENTS"/);
 });
