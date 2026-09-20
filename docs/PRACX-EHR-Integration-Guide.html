@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Enhancing Your EHR with PRACX: A Seamless Integration Guide</title>
+  <style>
+    :root {
+      --ink: #17201d;
+      --muted: #5c6964;
+      --line: #dfe5e1;
+      --soft: #edf1ee;
+      --canvas: #f4f6f3;
+      --surface: #ffffff;
+      --forest: #143c32;
+      --accent: #1a6b52;
+      --mint: #dff2ea;
+      --mint-strong: #98d8c1;
+      --amber: #e8b85e;
+      --danger: #b74f4f;
+      --before: #8a9590;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      color: var(--ink);
+      background: var(--canvas);
+      line-height: 1.55;
+      font-size: 11.5pt;
+    }
+    .page {
+      max-width: 8.5in;
+      margin: 0 auto;
+      background: var(--surface);
+    }
+    .cover {
+      background: var(--forest);
+      color: #f4faf7;
+      padding: 40px 48px 32px;
+    }
+    .cover .kicker {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-size: 10px;
+      color: var(--mint-strong);
+      margin-bottom: 14px;
+    }
+    .cover h1 {
+      font-size: 30px;
+      line-height: 1.15;
+      margin: 0 0 12px;
+      font-weight: 600;
+    }
+    .cover p.lede {
+      font-size: 14.5px;
+      max-width: 38em;
+      color: #d7ece4;
+      margin: 0 0 18px;
+    }
+    .meta-row {
+      display: flex;
+      gap: 28px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 11px;
+      color: #b7d4c8;
+    }
+    .content { padding: 28px 48px 48px; }
+    h2 {
+      font-size: 19px;
+      color: var(--forest);
+      margin: 28px 0 10px;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 14px;
+      color: var(--accent);
+      margin: 18px 0 8px;
+      page-break-after: avoid;
+    }
+    p { margin: 0 0 11px; }
+    ul, ol { margin: 0 0 12px; padding-left: 1.2em; }
+    li { margin-bottom: 5px; }
+    .takeaways {
+      background: var(--mint);
+      border: 1px solid var(--mint-strong);
+      padding: 16px 20px;
+      margin: 0 0 20px;
+      page-break-inside: avoid;
+    }
+    .takeaways h2 { margin-top: 0; font-size: 16px; }
+    figure {
+      margin: 12px 0 20px;
+      page-break-inside: avoid;
+    }
+    figure img,
+    figure .doodle {
+      width: 100%;
+      height: auto;
+      display: block;
+      border: 1px dashed #c5d4ce;
+      background: #f7faf8;
+    }
+    .doodle .stroke {
+      fill: none;
+      stroke: #143c32;
+      stroke-width: 2.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .doodle .stroke-thin {
+      fill: none;
+      stroke: #143c32;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .doodle .fill-mint { fill: #dff2ea; }
+    .doodle .fill-paper { fill: #fffdf8; }
+    .doodle .fill-forest { fill: #143c32; }
+    .doodle .fill-accent { fill: #1a6b52; }
+    .doodle .fill-amber { fill: #f6e3b8; }
+    .doodle .fill-danger { fill: #f3d4d4; }
+    .doodle .label {
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      fill: #143c32;
+    }
+    .doodle .label-sm {
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      font-size: 11px;
+      fill: #5c6964;
+    }
+    figcaption {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 10.5px;
+      color: var(--muted);
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+    figcaption strong { color: var(--forest); }
+    .split-captions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 11px;
+      margin: -8px 0 18px;
+    }
+    .split-captions div {
+      background: var(--canvas);
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+    }
+    .split-captions .bad { border-left: 4px solid var(--danger); }
+    .split-captions .good { border-left: 4px solid var(--accent); }
+    .split-captions strong { display: block; margin-bottom: 4px; color: var(--forest); }
+
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin: 8px 0 20px;
+    }
+    .chart-card {
+      border: 1px solid var(--line);
+      background: var(--canvas);
+      padding: 12px 14px 14px;
+      page-break-inside: avoid;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .chart-card.wide { grid-column: 1 / -1; }
+    .chart-card h4 {
+      margin: 0 0 4px;
+      font-size: 12.5px;
+      color: var(--forest);
+    }
+    .chart-note {
+      margin: 8px 0 0;
+      font-size: 9.5px;
+      color: var(--muted);
+    }
+    .legend {
+      display: flex;
+      gap: 14px;
+      font-size: 10px;
+      margin: 6px 0 10px;
+    }
+    .swatch {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      margin-right: 4px;
+      vertical-align: -1px;
+    }
+    .swatch.before { background: var(--before); }
+    .swatch.after { background: var(--accent); }
+    .swatch.held { background: var(--amber); }
+    .swatch.miss { background: var(--danger); }
+
+    .metric-row { margin-bottom: 10px; }
+    .metric-row .lab {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10.5px;
+      margin-bottom: 4px;
+      color: var(--ink);
+    }
+    .track { height: 22px; background: #e3eae6; position: relative; overflow: hidden; }
+    .bar {
+      height: 100%;
+      width: 0;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 650;
+      color: white;
+      animation: growBar 1.15s ease-out forwards;
+    }
+    .bar.before { background: var(--before); animation-delay: 0.1s; }
+    .bar.after { background: var(--accent); animation-delay: 0.35s; }
+    @keyframes growBar {
+      from { width: 0; }
+      to { width: var(--w); }
+    }
+
+    .funnel {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 0.7fr 0.55fr;
+      gap: 6px;
+      align-items: end;
+      height: 120px;
+      margin-top: 8px;
+    }
+    .funnel > div {
+      color: white;
+      font-size: 10px;
+      font-weight: 650;
+      text-align: center;
+      padding: 8px 4px;
+      animation: rise 1s ease-out forwards;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .funnel .a { background: var(--forest); height: 100%; animation-delay: 0.05s; }
+    .funnel .b { background: var(--accent); height: 82%; animation-delay: 0.2s; }
+    .funnel .c { background: var(--amber); color: #3a2a00; height: 38%; animation-delay: 0.35s; }
+    .funnel .d { background: var(--danger); height: 22%; animation-delay: 0.5s; }
+    @keyframes rise {
+      from { transform: scaleY(0.15); opacity: 0.3; }
+      to { transform: scaleY(1); opacity: 1; }
+    }
+    .funnel > div { transform-origin: bottom; }
+
+    .loop-wrap { margin: 8px 0 16px; page-break-inside: avoid; }
+    .loop-wrap svg { width: 100%; height: auto; display: block; }
+    .dash {
+      stroke-dasharray: 8 8;
+      animation: march 1.4s linear infinite;
+    }
+    .dash-back {
+      stroke-dasharray: 5 7;
+      animation: march 1.8s linear infinite reverse;
+    }
+    @keyframes march { to { stroke-dashoffset: -30; } }
+    .pulse {
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
+
+    .steps-visual {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      margin: 8px 0 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      page-break-inside: avoid;
+    }
+    .steps-visual article {
+      border: 1px solid var(--line);
+      padding: 10px 8px 12px;
+      text-align: center;
+      background: var(--canvas);
+      animation: fadeUp 0.7s ease-out both;
+    }
+    .steps-visual article:nth-child(2) { animation-delay: 0.1s; }
+    .steps-visual article:nth-child(3) { animation-delay: 0.2s; }
+    .steps-visual article:nth-child(4) { animation-delay: 0.3s; }
+    .steps-visual article:nth-child(5) { animation-delay: 0.4s; }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .steps-visual .n {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--forest);
+      color: white;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .steps-visual strong { display: block; font-size: 11px; color: var(--forest); margin-bottom: 4px; }
+    .steps-visual span { font-size: 10px; color: var(--muted); }
+
+    .life {
+      display: flex;
+      gap: 0;
+      margin: 10px 0 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 9.5px;
+      font-weight: 650;
+      page-break-inside: avoid;
+    }
+    .life div {
+      flex: 1;
+      text-align: center;
+      padding: 10px 4px;
+      color: white;
+      position: relative;
+      animation: fadeUp 0.6s ease both;
+    }
+    .life div:nth-child(1) { background: #1a4a3e; animation-delay: 0.05s; }
+    .life div:nth-child(2) { background: #1a6b52; animation-delay: 0.15s; }
+    .life div:nth-child(3) { background: #2a8f6e; animation-delay: 0.25s; }
+    .life div:nth-child(4) { background: #3aa37f; animation-delay: 0.35s; }
+    .life div:nth-child(5) { background: #143c32; animation-delay: 0.45s; }
+    .life div:nth-child(6) { background: #0f2e27; animation-delay: 0.55s; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 10.5px;
+      margin: 8px 0 16px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--soft); color: var(--forest); font-weight: 600; }
+    .step {
+      border-left: 3px solid var(--accent);
+      padding: 2px 0 2px 14px;
+      margin-bottom: 10px;
+      page-break-inside: avoid;
+    }
+    .faq dt {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-weight: 650;
+      color: var(--forest);
+      margin-top: 10px;
+    }
+    .faq dd { margin: 4px 0 0 0; }
+    .footer-note {
+      margin-top: 28px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .callout {
+      background: var(--canvas);
+      border: 1px solid var(--line);
+      padding: 14px 18px;
+      margin: 14px 0 16px;
+      page-break-inside: avoid;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; }
+      .bar { width: var(--w); }
+    }
+    @media print {
+      body { background: white; }
+      .page { max-width: none; }
+      .cover, .takeaways, .chart-card, th, .bar, .funnel > div, .life div, .steps-visual .n, .doodle {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .bar { animation: none; width: var(--w) !important; }
+      .funnel > div, .life div, .steps-visual article { animation: none; opacity: 1; transform: none; }
+      .dash, .dash-back, .pulse { animation: none; }
+      a { color: inherit; text-decoration: none; }
+    }
+    @page { size: letter; margin: 0.45in; }
+  </style>
+</head>
+<body>
+  <article class="page">
+    <header class="cover">
+      <div class="kicker">Internal briefing · EHR / EMR integration</div>
+      <h1>Enhancing Your EHR with PRACX: A Seamless Integration Guide</h1>
+      <p class="lede">
+        Connecting the electronic health record to medical billing is essential to an efficient practice. When clinical and financial systems operate independently, staff re-enter the same data, claims are delayed, and reimbursement suffers. PRACX is the billing and integrations layer that sits between the practice EHR and payers.
+      </p>
+      <div class="meta-row">
+        <div>Audience: PRACX team</div>
+        <div>Confidential — internal use</div>
+        <div>September 2026</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="takeaways">
+        <h2>Key takeaways</h2>
+        <ul>
+          <li>Integrating the EHR with PRACX eliminates duplicate entry of demographics, coverage, and charges, and reduces the transcription errors that drive claim rejections.</li>
+          <li>A unified workflow shortens the claim lifecycle: encounter data is validated on intake, scrubbed, submitted electronically or on CMS-1500, acknowledged, posted from ERA, and written back to the EHR as status.</li>
+          <li>PRACX is designed to work with the EHR the practice already uses. Current intake supports Elation-oriented PRACX inbound bundle v1 and FHIR R4. Stedi handles 837, acknowledgements, and 835 ERA. Eligibility uses 270/271 with an audited review before coverage or address updates are applied.</li>
+        </ul>
+      </section>
+
+      <h2>Why EHR integration matters in medical billing</h2>
+      <p>
+        When the EHR and billing system do not exchange data, the practice absorbs the inefficiency. Staff manually transfer patient demographics, insurance, encounter details, and codes. The result is wasted time, avoidable denials, and slower cash flow.
+      </p>
+      <p>Typical consequences of disconnected systems include:</p>
+      <ul>
+        <li><strong>Duplicate data entry.</strong> Re-keying names, member identifiers, and diagnoses is a primary source of typos and rejections.</li>
+        <li><strong>Coding discrepancies.</strong> Clinical documentation in the EHR and codes on the claim drift apart, creating compliance risk and denials.</li>
+        <li><strong>Delayed submission.</strong> Manual charge transfer lengthens the interval between date of service and claim filing.</li>
+        <li><strong>Incomplete visibility.</strong> Front desk, clinicians, and billing staff see different versions of coverage and claim status.</li>
+      </ul>
+      <figure>
+        <svg class="doodle" viewBox="0 0 820 300" role="img" aria-label="Disconnected EHR and billing compared with an integrated PRACX workflow">
+          <line class="stroke-thin" x1="410" y1="18" x2="410" y2="282" stroke-dasharray="5 7" />
+          <text class="label" x="205" y="32" text-anchor="middle">Disconnected systems</text>
+          <ellipse class="fill-danger stroke" cx="118" cy="88" rx="28" ry="26" />
+          <circle cx="108" cy="82" r="2.5" fill="#143c32" />
+          <circle cx="126" cy="82" r="2.5" fill="#143c32" />
+          <path class="stroke-thin" d="M108 98 Q118 92 128 98" />
+          <path class="stroke" d="M118 114 q-22 8 -28 48 h56 q-4 -40 -28 -48" />
+          <path class="stroke-thin" d="M90 162 L58 128" />
+          <path class="stroke-thin" d="M146 162 L178 126" />
+          <rect class="fill-paper stroke" x="40" y="168" width="70" height="48" transform="rotate(-12 75 192)" />
+          <rect class="fill-paper stroke" x="95" y="178" width="70" height="48" transform="rotate(8 130 202)" />
+          <rect class="fill-paper stroke" x="62" y="210" width="64" height="40" transform="rotate(-4 94 230)" />
+          <text class="label-sm" x="75" y="198" transform="rotate(-12 75 192)">EHR</text>
+          <text class="label-sm" x="118" y="206" transform="rotate(8 130 202)">Billing</text>
+          <path class="stroke" d="M200 150 l8 18 18 -28" />
+          <path class="stroke" d="M218 140 l18 28" />
+          <circle class="stroke fill-danger" cx="320" cy="120" r="36" />
+          <path class="stroke" d="M302 102 L338 138 M338 102 L302 138" />
+          <path class="stroke-thin" d="M250 70 q20 -30 48 -8 q8 22 -10 34" />
+          <text class="label-sm" x="205" y="278" text-anchor="middle">Manual re-entry</text>
+          <text class="label" x="615" y="32" text-anchor="middle">Integrated workflow</text>
+          <ellipse class="fill-mint stroke" cx="500" cy="92" rx="28" ry="26" />
+          <circle cx="490" cy="86" r="2.5" fill="#143c32" />
+          <circle cx="508" cy="86" r="2.5" fill="#143c32" />
+          <path class="stroke-thin" d="M490 102 Q500 110 510 102" />
+          <path class="stroke" d="M500 118 q-20 10 -24 46 h48 q-2 -38 -24 -46" />
+          <rect class="fill-paper stroke" x="478" y="168" width="44" height="32" rx="4" />
+          <path class="stroke" d="M544 184 C 580 140, 620 140, 656 184" />
+          <circle class="fill-accent stroke" cx="656" cy="188" r="34" />
+          <text x="656" y="184" text-anchor="middle" fill="#f4faf7" font-size="11" font-family="Trebuchet MS, sans-serif" font-weight="700">PRACX</text>
+          <text x="656" y="198" text-anchor="middle" fill="#dff2ea" font-size="9" font-family="Trebuchet MS, sans-serif">RCM</text>
+          <path class="stroke" d="M690 188 C 724 150, 760 168, 772 200" />
+          <rect class="fill-paper stroke" x="748" y="196" width="40" height="28" rx="3" />
+          <path class="stroke" d="M756 210 l8 8 14 -16" />
+          <text class="label-sm" x="615" y="278" text-anchor="middle">Automated exchange</text>
+        </svg>
+        <figcaption>Figure 1. Manual transfer between EHR and billing compared with automated exchange through PRACX.</figcaption>
+      </figure>
+
+      <div class="charts">
+        <div class="chart-card wide">
+          <h4>Illustrative operational impact</h4>
+          <div class="legend">
+            <span><i class="swatch before"></i>Disconnected EHR and billing</span>
+            <span><i class="swatch after"></i>EHR integrated with PRACX</span>
+          </div>
+          <div class="metric-row">
+            <div class="lab"><span>Days from encounter to submit</span><span>8 → 2</span></div>
+            <div class="track"><div class="bar before" style="--w:100%"></div></div>
+            <div class="track" style="margin-top:3px"><div class="bar after" style="--w:25%"></div></div>
+          </div>
+          <div class="metric-row">
+            <div class="lab"><span>First-pass denial rate</span><span>12% → 5%</span></div>
+            <div class="track"><div class="bar before" style="--w:100%"></div></div>
+            <div class="track" style="margin-top:3px"><div class="bar after" style="--w:42%"></div></div>
+          </div>
+          <div class="metric-row">
+            <div class="lab"><span>Staff hours per week on re-entry</span><span>14 → 2</span></div>
+            <div class="track"><div class="bar before" style="--w:100%"></div></div>
+            <div class="track" style="margin-top:3px"><div class="bar after" style="--w:14%"></div></div>
+          </div>
+          <div class="metric-row">
+            <div class="lab"><span>Days in A/R</span><span>42 → 28</span></div>
+            <div class="track"><div class="bar before" style="--w:100%"></div></div>
+            <div class="track" style="margin-top:3px"><div class="bar after" style="--w:67%"></div></div>
+          </div>
+          <p class="chart-note">Each pair is scaled to the disconnected baseline so the relative change is visible. Values are planning estimates for internal discussion, not contractual performance targets.</p>
+        </div>
+        <div class="chart-card">
+          <h4>Clean claim rate</h4>
+          <svg viewBox="0 0 320 150" role="img" aria-label="Clean claim rate rising from 78 percent to 94 percent">
+            <line x1="36" y1="20" x2="36" y2="120" stroke="#dfe5e1" />
+            <line x1="36" y1="120" x2="310" y2="120" stroke="#dfe5e1" />
+            <text x="8" y="24" font-size="9" fill="#5c6964">100%</text>
+            <text x="14" y="72" font-size="9" fill="#5c6964">80%</text>
+            <text x="14" y="124" font-size="9" fill="#5c6964">60%</text>
+            <polyline class="pulse" fill="none" stroke="#1a6b52" stroke-width="3"
+              points="50,92 100,84 150,70 200,52 250,40 295,32" />
+            <circle cx="50" cy="92" r="4" fill="#8a9590" />
+            <circle cx="295" cy="32" r="5" fill="#143c32" />
+            <text x="42" y="140" font-size="9" fill="#5c6964">Disconnected</text>
+            <text x="238" y="140" font-size="9" fill="#143c32">Integrated</text>
+            <text x="255" y="22" font-size="11" font-weight="700" fill="#143c32">94%</text>
+            <text x="40" y="82" font-size="11" font-weight="700" fill="#8a9590">78%</text>
+          </svg>
+          <p class="chart-note">Planning estimate: fewer transcription and coverage defects at first submission.</p>
+        </div>
+        <div class="chart-card">
+          <h4>Billing staff time, disconnected process</h4>
+          <svg viewBox="0 0 320 150" role="img" aria-label="Time spent pie: re-keying dominates without integration">
+            <circle cx="78" cy="78" r="52" fill="#edf1ee" />
+            <path d="M78 78 L78 26 A52 52 0 1 1 38 112 Z" fill="#b74f4f" />
+            <path d="M78 78 L38 112 A52 52 0 0 1 50 36 Z" fill="#8a9590" />
+            <path d="M78 78 L50 36 A52 52 0 0 1 78 26 Z" fill="#1a6b52" />
+            <text x="150" y="40" font-size="11" fill="#b74f4f">45% re-entry and follow-up</text>
+            <text x="150" y="60" font-size="11" fill="#5c6964">30% denial repair</text>
+            <text x="150" y="80" font-size="11" fill="#1a6b52">15% claim preparation</text>
+            <text x="150" y="100" font-size="11" fill="#8a9590">10% reporting</text>
+            <text x="150" y="128" font-size="9" fill="#5c6964">Planning allocation for internal discussion.</text>
+          </svg>
+        </div>
+      </div>
+
+      <h2>PRACX architecture</h2>
+      <p>
+        PRACX does not replace the EHR. Clinical documentation remains in the system of care. PRACX receives claim inputs, validates them, prepares and submits claims, posts payments, and returns lifecycle status to the EHR.
+      </p>
+      <figure>
+        <svg class="doodle" viewBox="0 0 820 240" role="img" aria-label="EHR, PRACX, and payer architecture">
+          <ellipse class="fill-mint stroke" cx="120" cy="78" rx="32" ry="30" />
+          <circle cx="108" cy="72" r="3" fill="#143c32" />
+          <circle cx="132" cy="72" r="3" fill="#143c32" />
+          <path class="stroke-thin" d="M108 90 Q120 98 132 90" />
+          <path class="stroke" d="M88 70 q-18 -22 6 -34" />
+          <path class="stroke" d="M120 108 q-28 12 -32 58 h64 q-2 -48 -32 -58" />
+          <path class="stroke" d="M92 140 q-22 8 -8 38" />
+          <circle class="stroke-thin" cx="78" cy="178" r="10" />
+          <path class="stroke-thin" d="M78 168 v-14" />
+          <text class="label" x="120" y="210" text-anchor="middle">EHR</text>
+          <text class="label-sm" x="120" y="226" text-anchor="middle">Clinical record</text>
+          <path class="stroke dash" d="M168 120 C 230 90, 270 90, 330 120" />
+          <path class="stroke" d="M318 108 l14 12 -16 6" />
+          <circle class="fill-accent stroke" cx="410" cy="118" r="58" />
+          <circle cx="392" cy="104" r="4" fill="#f4faf7" />
+          <circle cx="428" cy="104" r="4" fill="#f4faf7" />
+          <path d="M392 128 Q410 142 428 128" fill="none" stroke="#dff2ea" stroke-width="3" stroke-linecap="round" />
+          <text x="410" y="168" text-anchor="middle" fill="#f4faf7" font-size="14" font-family="Trebuchet MS, sans-serif" font-weight="700">PRACX</text>
+          <path class="stroke dash" d="M470 120 C 530 90, 580 90, 640 120" />
+          <path class="stroke" d="M628 108 l14 12 -16 6" />
+          <rect class="fill-paper stroke" x="650" y="58" width="110" height="96" />
+          <path class="stroke" d="M650 58 L705 28 L760 58" />
+          <rect class="fill-mint stroke-thin" x="672" y="78" width="22" height="18" />
+          <rect class="fill-mint stroke-thin" x="716" y="78" width="22" height="18" />
+          <rect class="fill-amber stroke-thin" x="688" y="112" width="34" height="42" />
+          <path class="stroke-thin" d="M780 88 q18 -6 22 12 v28 h-28" />
+          <text class="label" x="705" y="210" text-anchor="middle">PAYERS</text>
+          <text class="label-sm" x="705" y="226" text-anchor="middle">837 · ERA</text>
+          <path class="stroke-thin dash-back" d="M700 188 C 520 228, 300 228, 140 188" />
+          <path class="stroke-thin" d="M152 198 l-14 -10 4 -12" />
+        </svg>
+        <figcaption>Figure 2. EHR, PRACX, and payer connections. The lower path returns acknowledgements, ERA, and claim status to the clinical system.</figcaption>
+      </figure>
+
+      <div class="loop-wrap">
+        <svg viewBox="0 0 760 210" role="img" aria-label="Animated four-direction data loop">
+          <rect x="20" y="48" width="170" height="88" rx="6" fill="#143c32" />
+          <text x="105" y="84" text-anchor="middle" fill="#f4faf7" font-size="16" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,sans-serif">EHR</text>
+          <text x="105" y="106" text-anchor="middle" fill="#98d8c1" font-size="11" font-family="-apple-system,BlinkMacSystemFont,sans-serif">Elation / FHIR R4</text>
+
+          <rect x="295" y="40" width="170" height="104" rx="6" fill="#1a6b52" />
+          <text x="380" y="84" text-anchor="middle" fill="#f4faf7" font-size="16" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,sans-serif">PRACX</text>
+          <text x="380" y="106" text-anchor="middle" fill="#dff2ea" font-size="11" font-family="-apple-system,BlinkMacSystemFont,sans-serif">Validate, scrub, submit, post</text>
+
+          <rect x="570" y="48" width="170" height="88" rx="6" fill="#143c32" />
+          <text x="655" y="84" text-anchor="middle" fill="#f4faf7" font-size="16" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,sans-serif">Payers</text>
+          <text x="655" y="106" text-anchor="middle" fill="#98d8c1" font-size="11" font-family="-apple-system,BlinkMacSystemFont,sans-serif">837 · 999 · 277CA · 835</text>
+
+          <path class="dash" d="M190 92 H295" stroke="#1a6b52" stroke-width="3" fill="none" />
+          <path class="dash" d="M465 92 H570" stroke="#1a6b52" stroke-width="3" fill="none" />
+          <path class="dash-back" d="M655 148 C655 178 380 188 380 148" stroke="#e8b85e" stroke-width="2.5" fill="none" />
+          <path class="dash-back" d="M380 144 C380 184 105 184 105 136" stroke="#e8b85e" stroke-width="2.5" fill="none" />
+
+          <text x="242" y="82" text-anchor="middle" fill="#143c32" font-size="10" font-family="-apple-system,BlinkMacSystemFont,sans-serif">patients, coverage, charges</text>
+          <text x="518" y="82" text-anchor="middle" fill="#143c32" font-size="10" font-family="-apple-system,BlinkMacSystemFont,sans-serif">batches &amp; EDI</text>
+          <text x="530" y="198" text-anchor="middle" fill="#8a5a00" font-size="10" font-family="-apple-system,BlinkMacSystemFont,sans-serif">Acknowledgements and ERA</text>
+          <text x="230" y="198" text-anchor="middle" fill="#8a5a00" font-size="10" font-family="-apple-system,BlinkMacSystemFont,sans-serif">Claim status</text>
+        </svg>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Direction</th>
+            <th>Data exchanged</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>EHR → PRACX</td>
+            <td>Patients, coverage, appointments, and encounters submitted as a FHIR R4 Bundle or PRACX inbound bundle v1. The dashboard action is Validate and queue. Accept applies records into PRACX; Hold and Reject do not.</td>
+          </tr>
+          <tr>
+            <td>PRACX → Stedi</td>
+            <td>837 professional claims, batch and EDI references, payer routing from practice setup.</td>
+          </tr>
+          <tr>
+            <td>Stedi → PRACX</td>
+            <td>999 and 277CA acknowledgements plus 835 ERA for matching and posting.</td>
+          </tr>
+          <tr>
+            <td>PRACX → EHR</td>
+            <td>Claim created, submitted, acknowledged, paid, or denied, so the EHR remains current.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>What the product does today</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>Current behavior</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Inbound intake</td>
+            <td>Operations dashboard accepts FHIR R4 or PRACX v1 JSON. FHIR is converted to the PRACX bundle, then validated. Patient and Appointment are required. Practitioner must carry a US NPI. Coverage and Encounter are optional.</td>
+          </tr>
+          <tr>
+            <td>Queue status</td>
+            <td>Pending when the payload is clean or has warnings only. Held when validation has errors. Missing integration when no connector is configured for the source system.</td>
+          </tr>
+          <tr>
+            <td>Accept</td>
+            <td>Creates or links patient (by external ID or name and date of birth), coverage (creates payer and plan if needed), appointment, and a draft encounter. Stores applied PRACX identifiers on the inbound event.</td>
+          </tr>
+          <tr>
+            <td>Identity map</td>
+            <td>External EHR identifiers are stored against internal PRACX identifiers so subsequent events update the same patient, coverage, appointment, or encounter.</td>
+          </tr>
+          <tr>
+            <td>Provider and facility</td>
+            <td>Must already exist in PRACX. Mapping is by provider ID or NPI and by facility ID, NPI, or code. Missing maps hold the event; they do not create new providers.</td>
+          </tr>
+          <tr>
+            <td>Connectors</td>
+            <td>Elation API and Stedi EDI credentials are stored with test versus live mode. Live is blocked until required secrets exist. Last-test status is shown on Integrations. Posted bundles are the working intake path; connector credentials prepare live pull and EDI.</td>
+          </tr>
+          <tr>
+            <td>Eligibility</td>
+            <td>270/271 check from the patient or eligibility workspace. Returned address and coverage changes are applied only after staff choose keep current or use eligibility response and record a reason.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Inbound validation</h2>
+      <p>
+        PRACX does not create a claim from an unvalidated payload. On the integrations dashboard, staff submit a FHIR R4 Bundle or a PRACX inbound bundle v1 (event types: day appointment, patient demographics, insurance, encounter). The system stores the payload and a validation issue list. Required patient fields include name, date of birth, and address. Appointment start time is required. Coverage, when present, requires payer name, plan name, and member ID.
+      </p>
+      <p>
+        Accept is the only action that writes into PRACX. If apply fails, the event remains held with reason apply_failed. Missing_integration is corrected by configuring a connector whose source system matches the bundle, not by accepting the event.
+      </p>
+      <figure>
+        <svg class="doodle" viewBox="0 0 820 260" role="img" aria-label="Inbound validation before claim preparation">
+          <rect class="fill-danger stroke" x="36" y="70" width="46" height="58" transform="rotate(-18 59 99)" />
+          <rect class="fill-amber stroke" x="78" y="90" width="50" height="54" transform="rotate(12 103 117)" />
+          <rect class="fill-paper stroke" x="48" y="130" width="48" height="50" transform="rotate(-8 72 155)" />
+          <path class="stroke-thin" d="M40 60 l70 40 M90 48 l-10 80" />
+          <text class="label-sm" x="90" y="210" text-anchor="middle">Unvalidated events</text>
+          <path class="fill-mint stroke" d="M250 210 V100 Q250 40 340 40 Q430 40 430 100 V210" />
+          <path class="fill-paper" d="M268 210 V108 Q268 58 340 58 Q412 58 412 108 V210" />
+          <path class="stroke" d="M268 210 V108 Q268 58 340 58 Q412 58 412 108 V210" />
+          <ellipse class="fill-paper stroke" cx="340" cy="100" rx="24" ry="22" />
+          <circle cx="332" cy="96" r="2.2" fill="#143c32" />
+          <circle cx="348" cy="96" r="2.2" fill="#143c32" />
+          <path class="stroke-thin" d="M332 108 Q340 112 348 108" />
+          <rect class="fill-paper stroke" x="318" y="128" width="28" height="36" />
+          <path class="stroke-thin" d="M322 138 h20 M322 146 h16" />
+          <text class="label" x="340" y="236" text-anchor="middle">Validation</text>
+          <path class="stroke dash" d="M430 150 H520" />
+          <path class="stroke" d="M508 140 l16 10 -16 10" />
+          <path class="fill-mint stroke" d="M540 118 h90 v70 h-78 l-12 -18 z" />
+          <path class="stroke-thin" d="M552 128 h60 M552 142 h50 M552 156 h40" />
+          <text class="label-sm" x="585" y="210" text-anchor="middle">Claim preparation</text>
+          <path class="fill-amber stroke" d="M700 150 l28 -22 h70 l-16 70 h-66 z" />
+          <text class="label-sm" x="748" y="210" text-anchor="middle">Held / unmatched</text>
+          <path class="stroke-thin" d="M430 180 C 560 230, 640 210, 710 168" />
+        </svg>
+        <figcaption>Figure 3. Inbound events are validated before claim creation. Exceptions remain in intake until resolved.</figcaption>
+      </figure>
+      <div class="chart-card wide">
+        <h4>Illustrative inbound disposition (100 events)</h4>
+        <div class="funnel">
+          <div class="a">100 received</div>
+          <div class="b">82 accepted</div>
+          <div class="c">12 held</div>
+          <div class="d">6 unmatched</div>
+        </div>
+        <p class="chart-note">Monitor acceptance rate and unmatched volume after go-live. Growth in unmatched events typically indicates identity or mapping drift, not a failure of claim generation.</p>
+      </div>
+
+      <h2>Claim lifecycle</h2>
+      <p>Accepted encounters proceed through claim scrubbing, generation of 837 professional or CMS-1500, submission, payer acknowledgement, and ERA posting.</p>
+      <figure>
+        <svg class="doodle" viewBox="0 0 820 220" role="img" aria-label="Claim lifecycle from documentation to reimbursement">
+          <path class="stroke" d="M30 150 H790" />
+          <path class="stroke-thin" d="M40 158 H780" stroke-dasharray="10 8" />
+          <rect class="fill-paper stroke" x="48" y="48" width="70" height="86" rx="4" />
+          <rect class="fill-mint stroke-thin" x="68" y="40" width="30" height="16" rx="4" />
+          <path class="stroke-thin" d="M62 78 h42 M62 92 h36 M62 106 h40" />
+          <text class="label-sm" x="83" y="200" text-anchor="middle">Documentation</text>
+          <circle class="fill-mint stroke" cx="220" cy="92" r="32" />
+          <path class="stroke" d="M244 116 L272 148" />
+          <path class="stroke" d="M208 84 l8 8 14 -18" />
+          <text class="label-sm" x="220" y="200" text-anchor="middle">Scrub</text>
+          <rect class="fill-paper stroke" x="330" y="68" width="88" height="56" />
+          <path class="stroke" d="M330 68 L374 98 L418 68" />
+          <text class="label-sm" x="374" y="200" text-anchor="middle">837 / CMS-1500</text>
+          <circle class="fill-mint stroke" cx="510" cy="96" r="30" />
+          <path class="stroke" d="M494 96 l12 12 22 -24" />
+          <text class="label-sm" x="510" y="200" text-anchor="middle">Acknowledgement</text>
+          <ellipse class="fill-amber stroke" cx="630" cy="108" rx="22" ry="10" />
+          <ellipse class="fill-amber stroke" cx="630" cy="98" rx="22" ry="10" />
+          <ellipse class="fill-amber stroke" cx="630" cy="88" rx="22" ry="10" />
+          <text class="label-sm" x="630" y="200" text-anchor="middle">ERA posting</text>
+          <rect class="fill-paper stroke" x="720" y="62" width="58" height="78" rx="6" />
+          <circle class="fill-accent" cx="749" cy="92" r="8" />
+          <path class="stroke-thin dash-back" d="M749 140 C 600 210, 280 210, 90 160" />
+          <text class="label-sm" x="749" y="200" text-anchor="middle">EHR status</text>
+        </svg>
+        <figcaption>Figure 4. Claim flow from clinical documentation through submission, acknowledgement, posting, and status update.</figcaption>
+      </figure>
+      <div class="life">
+        <div>Needs<br>scrub</div>
+        <div>Scrubbing</div>
+        <div>Ready to<br>bill</div>
+        <div>Generated</div>
+        <div>Submitted</div>
+        <div>Posted<br>/ closed</div>
+      </div>
+      <p class="chart-note" style="margin-top:0;margin-bottom:14px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">Workflow statuses: needs scrubbing, scrubbing, error or ready to bill, generating, generated, submitted, then ERA posting. Blocking errors remain in queue and are not transmitted.</p>
+
+      <h3>Eligibility verification</h3>
+      <p>
+        Automated or on-demand 270/271 checks at scheduling or check-in confirm active coverage, copay, deductible remaining, and coinsurance before service. That reduces eligibility-related denials and unexpected patient balances.
+      </p>
+      <figure>
+        <svg class="doodle" viewBox="0 0 820 260" role="img" aria-label="Eligibility verification at check-in">
+          <line class="stroke-thin" x1="410" y1="20" x2="410" y2="240" stroke-dasharray="5 7" />
+          <text class="label" x="205" y="36" text-anchor="middle">Coverage not verified</text>
+          <ellipse class="fill-danger stroke" cx="120" cy="90" rx="26" ry="24" />
+          <circle cx="110" cy="84" r="2.4" fill="#143c32" />
+          <circle cx="128" cy="84" r="2.4" fill="#143c32" />
+          <path class="stroke-thin" d="M110 102 Q120 94 130 102" />
+          <path class="stroke" d="M120 114 q-18 8 -22 44 h44 q-2 -36 -22 -44" />
+          <rect class="fill-paper stroke" x="200" y="70" width="120" height="90" />
+          <text x="260" y="124" text-anchor="middle" fill="#b74f4f" font-size="42" font-family="Trebuchet MS, sans-serif" font-weight="700">$</text>
+          <path class="stroke" d="M340 70 l18 50 18 -50" />
+          <text class="label-sm" x="205" y="230" text-anchor="middle">Eligibility-related denial risk</text>
+          <text class="label" x="615" y="36" text-anchor="middle">Coverage verified</text>
+          <ellipse class="fill-mint stroke" cx="520" cy="90" rx="26" ry="24" />
+          <circle cx="510" cy="84" r="2.4" fill="#143c32" />
+          <circle cx="528" cy="84" r="2.4" fill="#143c32" />
+          <path class="stroke-thin" d="M510 100 Q520 108 530 100" />
+          <path class="stroke" d="M520 114 q-18 8 -22 44 h44 q-2 -36 -22 -44" />
+          <circle class="fill-mint stroke" cx="640" cy="108" r="36" />
+          <path class="stroke" d="M624 108 l12 14 24 -28" />
+          <ellipse class="fill-amber stroke" cx="730" cy="150" rx="18" ry="9" />
+          <text class="label-sm" x="730" y="178" text-anchor="middle">Patient share</text>
+          <text class="label-sm" x="615" y="230" text-anchor="middle">Responsibility identified before service</text>
+        </svg>
+        <figcaption>Figure 5. Real-time eligibility verification reduces unexpected balances and inactive-coverage denials.</figcaption>
+      </figure>
+
+      <h3>Supporting capabilities</h3>
+      <ul>
+        <li><strong>Coding assistance.</strong> Office-visit CPT may be suggested from Assessment complexity (problem count, severity, status, differentials, plan rationale, diagnostic notes), taking the higher of time-based and MDM-style leveling. Codes are confirmed in Charges before they appear on the claim.</li>
+        <li><strong>Claim scrubbing.</strong> Errors and warnings are mapped to CMS-1500 fields, including patient, insurance, NPI, date of service, CPT, ICD-10, modifiers, and timely filing.</li>
+        <li><strong>Payment posting.</strong> Checks, EFT, 835 ERA, and paper EOB can be allocated across claims. Matching totals may post automatically.</li>
+        <li><strong>Care operations (optional surface).</strong> SOAP with structured Assessment (summary, working diagnoses, differentials, plan rationale), head-to-toe Objective exam, vitals, dictation, HPI assist, and encounter draft autosave that does not overwrite signed, ready-to-bill, or billed visits.</li>
+        <li><strong>Same-day documents.</strong> Photo or file upload, view, and AI heads-up. Drafts copy into diagnostic notes only when the clinician accepts. They are not written into a signed note automatically.</li>
+        <li><strong>Patient chart.</strong> Facesheet, history, problems, medications, immunizations, allergies, vitals, notes, labs and studies, flowsheets, demographics, account, care checklist, documents, and recall.</li>
+      </ul>
+
+      <h2>Implementation</h2>
+      <div class="steps-visual">
+        <article><div class="n">1</div><strong>Evaluate</strong><span>Identify re-entry, denial, and status gaps.</span></article>
+        <article><div class="n">2</div><strong>Map</strong><span>Patient, coverage, encounter, NPI, status.</span></article>
+        <article><div class="n">3</div><strong>Configure</strong><span>EHR connector and Stedi in test mode.</span></article>
+        <article><div class="n">4</div><strong>Validate</strong><span>Test bundle, scrub, 837, and 835.</span></article>
+        <article><div class="n">5</div><strong>Monitor</strong><span>Intake, clean claims, unposted ERA.</span></article>
+      </div>
+      <div class="step">
+        <h3>Step 1 — Evaluate</h3>
+        <p>Document where demographics, coverage, charges, and claim status reside today. Common gaps include paper charge tickets, eligibility checked only in a payer portal, ERA posted in a spreadsheet, and no claim status in the EHR.</p>
+      </div>
+      <div class="step">
+        <h3>Step 2 — Map data exchange</h3>
+        <p>Define inbound event types: day appointment, patient demographics, insurance, and encounter. For FHIR R4, include Patient and Appointment at minimum; add Coverage and Encounter when available. Practitioner identifiers must use the US NPI system. Provider NPI and facility NPI or code must match records already in PRACX setup.</p>
+      </div>
+      <div class="step">
+        <h3>Step 3 — Configure connectors</h3>
+        <p>Configure the Elation API or FHIR OAuth connector and the Stedi EDI connector. Add 270/271 and 835 adapters if they are not included in the same partnership. Align electronic payer identifiers. Remain in test mode until the last connectivity test succeeds and required credentials are present. Live mode is blocked until those credentials exist.</p>
+      </div>
+      <div class="step">
+        <h3>Step 4 — Test and train</h3>
+        <p>On the dashboard, submit a test FHIR or PRACX bundle with Validate and queue. Confirm pending versus held and the validation issue list. Accept a clean event and verify that a patient, coverage, appointment, and draft encounter exist, then proceed to claim scrub, 837 or CMS-1500, and a test 835. Train billing staff on Accept, Hold, and Reject. Train clinicians that coding suggestions and AI heads-up require explicit acceptance.</p>
+      </div>
+      <div class="step">
+        <h3>Step 5 — Monitor</h3>
+        <p>Track connector health, open inbound events, open sync items, clean-claim rate, rejected claims, and unposted ERA. Unmatched identity events are an early indicator of mapping drift and should be resolved promptly.</p>
+      </div>
+
+      <h2>Integration challenges and PRACX controls</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Observation</th>
+            <th>Likely cause</th>
+            <th>Control</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Status missing_integration</td>
+            <td>sourceSystem does not match a configured connector</td>
+            <td>Configure Elation or FHIR under Integrations; do not Accept</td>
+          </tr>
+          <tr>
+            <td>Accept fails; event returns to held</td>
+            <td>Provider or facility NPI is not in PRACX, or payload is incomplete</td>
+            <td>Add the provider or facility in setup, correct the bundle, then Accept</td>
+          </tr>
+          <tr>
+            <td>Rising unmatched inbound volume</td>
+            <td>Name, date of birth, or member ID mismatch</td>
+            <td>Hold or reject; correct the source record; then accept</td>
+          </tr>
+          <tr>
+            <td>Scrub errors before payer submission</td>
+            <td>Incomplete or inconsistent claim data</td>
+            <td>CMS-1500 field-level scrub; coding confirmation</td>
+          </tr>
+          <tr>
+            <td>One-way feed; stale claim status in the EHR</td>
+            <td>No return path configured</td>
+            <td>Four-direction sync: EHR→PRACX, PRACX→Stedi, Stedi→PRACX, PRACX→EHR</td>
+          </tr>
+          <tr>
+            <td>Live connector failure</td>
+            <td>Missing credential or incorrect environment</td>
+            <td>Test versus live mode, last-test status, encrypted secrets</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Frequently asked questions</h2>
+      <dl class="faq">
+        <dt>Does PRACX replace the customer’s EHR?</dt>
+        <dd>No. PRACX connects to the EHR the practice already operates. Elation is the primary named connector. FHIR R4 and the PRACX inbound bundle support additional sources when mapped.</dd>
+        <dt>Will integration reduce denials?</dt>
+        <dd>It reduces denials caused by transcription errors, inactive coverage, and incomplete CMS-1500 data. Medical-necessity and contract denials still require clinical documentation and payer follow-up; they become visible sooner.</dd>
+        <dt>What happens if inbound data is incorrect?</dt>
+        <dd>Do not Accept. Hold or Reject, correct mapping or the source system, then resubmit or Accept. Accept writes patient, coverage, appointment, and a draft encounter; it is not a status-only action.</dd>
+        <dt>Must the EHR post FHIR, or can it use a simpler payload?</dt>
+        <dd>Either. FHIR R4 Bundles are converted internally. PRACX inbound bundle v1 is a JSON contract with schemaVersion 1, sourceSystem, eventType, patient, appointment, optional coverage and encounter, and mapping for provider and facility.</dd>
+        <dt>How long does an integration take?</dt>
+        <dd>Duration depends on the EHR and the completeness of payer and provider setup. The sequence is: configure connectors in test, submit a test bundle, Accept and confirm applied records, scrub and submit a test claim, process a test 835, then move to live and monitor intake and sync.</dd>
+      </dl>
+
+      <div class="callout">
+        <h3 style="margin-top:0;">Customer positioning</h3>
+        <p style="margin-bottom:0;">
+          The practice retains its EHR. PRACX receives the data required to bill, validates and files claims electronically or on CMS-1500, posts ERA, and returns claim status so clinical staff have an accurate view of reimbursement.
+        </p>
+      </div>
+
+      <p>
+        Implementation begins with connector configuration and inbound intake. Claim preparation confirms that billing data is complete. Payments and reports confirm that the integration is operating as designed.
+      </p>
+      <p class="footer-note">
+        PRACX internal briefing. Diagrams are schematic. Chart values are planning estimates for internal discussion and are not service-level commitments.
+        Product as of September 2026: FHIR R4 and PRACX v1 ingest with Validate and queue; Accept applies patient, coverage, appointment, and draft encounter; Elation and Stedi connectors; 270/271 eligibility with audited updates; 835 ERA; claim scrubbing; CMS-1500; optional care-operations chart, Assessment workspace, and document AI heads-up.
+      </p>
+    </div>
+  </article>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# Local Cloudflare / vinext secrets (do not commit real keys)
+# Copy to .dev.vars and restart: npx vinext dev
+
+OPENAI_API_KEY=
+OPENAI_LAB_MODEL=gpt-4.1-mini
+OPENAI_HPI_MODEL=gpt-4.1-mini
+
+# Encrypts integration credentials at rest (AES-GCM). Generate with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+# Rotating this key makes every stored secret unreadable and they must be re-entered.
+INTEGRATION_CREDENTIAL_KEY=
