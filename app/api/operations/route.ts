@@ -87,6 +87,7 @@ import {
   batchTypeFromPayer,
   buildBatchFileNames,
   buildBatchProofText,
+  payerBatchGroupingKey,
 } from "../../../lib/claim-batches";
 import {
   claimFormatForChannel,
@@ -4605,7 +4606,7 @@ export async function POST(request: Request) {
       }
 
       const payerCache = new Map<string, typeof payers.$inferSelect | null>();
-      const groups = new Map<string, typeof selected>();
+      const groups = new Map<string, { payerKey: string; payerIdentifier: string; batchType: "edi" | "paper"; claims: typeof selected }>();
       for (const claim of selected) {
         const payerKey = claim.payerId || "self_pay";
         if (claim.payerId && !payerCache.has(claim.payerId)) {
@@ -4616,19 +4617,20 @@ export async function POST(request: Request) {
         }
         const payer = claim.payerId ? payerCache.get(claim.payerId) || null : null;
         const batchType = batchTypeFromPayer(payer);
-        const groupKey = `${payerKey}:${batchType}`;
-        const bucket = groups.get(groupKey) || [];
-        bucket.push(claim);
-        groups.set(groupKey, bucket);
+        const payerIdentifier = payer?.payerId || "SELF_PAY";
+        const groupKey = payerBatchGroupingKey({ payerIdentifier, payerRecordId: payerKey, batchType });
+        const group = groups.get(groupKey) || { payerKey, payerIdentifier, batchType, claims: [] as typeof selected };
+        group.claims.push(claim);
+        groups.set(groupKey, group);
       }
 
       const created: Array<{ id: string; batchNumber: string; batchType: string; claimCount: number; payerName: string }> = [];
       const now = new Date();
       const nowIso = now.toISOString();
       let sequence = 0;
-      for (const [groupKey, groupClaims] of groups.entries()) {
+      for (const group of groups.values()) {
         sequence += 1;
-        const [payerKey, batchType] = groupKey.split(":") as [string, "edi" | "paper"];
+        const { payerKey, payerIdentifier, batchType, claims: groupClaims } = group;
         const payer = payerKey === "self_pay" ? null : payerCache.get(payerKey) || null;
         const payerName = payer?.name || "Self pay";
         const batchId = crypto.randomUUID();
@@ -4662,6 +4664,7 @@ export async function POST(request: Request) {
         const proofContent = buildBatchProofText({
           batchNumber,
           payerName,
+          payerIdentifier,
           batchType,
           claimCount: groupClaims.length,
           createdBy: currentUser.fullName,

@@ -10806,6 +10806,22 @@ body:has(.clinical-command-center) .operations-topbar p {
   text-align: center;
 }
 .claims-bucket-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.batch-preview-panel {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 16px;
+  border: 1px solid #cfe3da;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f6fbf8, #fff);
+}
+.batch-preview-panel h3 { margin: 4px 0 2px; color: #163d31; font-size: 1rem; }
+.batch-preview-panel p { margin: 0; color: #61756d; font-size: .84rem; }
+.batch-preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.batch-preview-grid article { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid #dce9e3; border-radius: 10px; background: #fff; }
+.batch-preview-grid article strong { color: #173f32; }
+.batch-preview-grid article span { color: #60756c; font-size: .78rem; }
+.batch-preview-grid article b { color: #267a60; font-size: .82rem; }
 
 .payment-modal {
   width: min(720px, 100%);

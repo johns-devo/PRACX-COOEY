@@ -2,6 +2,16 @@ import { claimFormatForChannel, deliveryChannelFromPayer, type ClaimDeliveryChan
 
 export type BatchType = "edi" | "paper";
 
+/** Group by the payer's external routing ID and delivery channel. */
+export function payerBatchGroupingKey(input: {
+  payerIdentifier?: string | null;
+  payerRecordId?: string | null;
+  batchType: BatchType;
+}) {
+  const payer = String(input.payerIdentifier || input.payerRecordId || "SELF_PAY").trim().toUpperCase();
+  return `${payer}::${input.batchType}`;
+}
+
 export function batchTypeFromChannel(channel: ClaimDeliveryChannel): BatchType {
   return channel === "electronic" ? "edi" : "paper";
 }
@@ -47,6 +57,7 @@ export function buildBatchFileNames(input: {
 export function buildBatchProofText(input: {
   batchNumber: string;
   payerName: string;
+  payerIdentifier?: string | null;
   batchType: BatchType;
   claimCount: number;
   createdBy: string;
@@ -64,6 +75,7 @@ export function buildBatchProofText(input: {
     "============================",
     `Batch ID: ${input.batchNumber}`,
     `Payer Name: ${input.payerName}`,
+    `Payer ID: ${input.payerIdentifier || "SELF_PAY"}`,
     `Batch Type: ${input.batchType.toUpperCase()}`,
     `Date Created: ${dateCreated}`,
     `Time Created: ${timeCreated}`,

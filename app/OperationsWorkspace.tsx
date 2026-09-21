@@ -1905,6 +1905,23 @@ function ClaimsWorkbench({
   const scrubIds = claimRows.filter((row) => ["received", "error"].includes(claimBucketFor(row))).map((row) => value(row, "id"));
   const readyIds = claimRows.map((row) => value(row, "id"));
   const selectedReadyIds = readyIds.filter((id) => selectedIds.has(id));
+  const batchPreviewRows = claimRows.filter((row) => !selectedReadyIds.length || selectedIds.has(value(row, "id")));
+  const batchPreviewGroups = Array.from(batchPreviewRows.reduce((groups, row) => {
+    const payerId = value(row, "payerClaimPayerId") || "SELF_PAY";
+    const delivery = deliveryFor(row);
+    const key = `${payerId}::${delivery}`;
+    const current = groups.get(key) || {
+      payerId,
+      payerName: value(row, "payerName") || "Self pay",
+      delivery,
+      count: 0,
+      charge: 0,
+    };
+    current.count += 1;
+    current.charge += Number(value(row, "totalCharge")) || 0;
+    groups.set(key, current);
+    return groups;
+  }, new Map<string, { payerId: string; payerName: string; delivery: ClaimDeliveryChannel; count: number; charge: number }>() ).values());
   const showClaimTable = bucket === "received" || bucket === "error" || bucket === "clean";
   const showCheckbox = bucket === "clean";
   const openEditor = (claimId: string, box = "") => {
@@ -2047,6 +2064,26 @@ function ClaimsWorkbench({
       )}
 
       {showClaimTable && (
+        <>
+        {bucket === "clean" && batchPreviewGroups.length > 0 && (
+          <section className="batch-preview-panel">
+            <div>
+              <span className="eyebrow">Batch review</span>
+              <h3>{selectedReadyIds.length ? "Selected claims will create these batches" : "Clean claims will create these payer batches"}</h3>
+              <p>Claims are grouped by the payer ID and delivery channel. Creating a batch locks its claims for transmission review.</p>
+            </div>
+            <div className="batch-preview-grid">
+              {batchPreviewGroups.map((group) => (
+                <article key={`${group.payerId}-${group.delivery}`}>
+                  <strong>{group.payerName}</strong>
+                  <span className="mono">Payer ID {group.payerId}</span>
+                  <span>{group.delivery === "electronic" ? "Electronic · 837P" : "Paper · CMS-1500"}</span>
+                  <b>{group.count} claim{group.count === 1 ? "" : "s"} · {currency(group.charge.toFixed(2))}</b>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
         <TablePanel
           description={bucket === "clean"
             ? "Passed scrub. Create payer batches to generate EDI or CMS-1500 files."
@@ -2104,6 +2141,7 @@ function ClaimsWorkbench({
             </tbody>
           </table>
         </TablePanel>
+        </>
       )}
 
       {bucket === "edi_batches" && renderBatchTable(ediBatches, "edi")}
