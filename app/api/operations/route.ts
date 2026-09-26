@@ -54,6 +54,7 @@ import {
   payers,
   paymentEntries,
   claimPayments,
+  claimPaymentServiceLines,
   paymentLogs,
   payments,
   practiceSettings,
@@ -119,12 +120,15 @@ import {
   calculatePaymentTotalEffective,
   claimOutstandingBalance,
   derivePaymentEntryStatus,
+  eraMappingError,
   isManualPaperEob,
   moneyFixed,
   moneyNumber,
   normalizePaymentMethod,
+  paymentMethodDetails,
   suggestClaimPaymentSeed,
   sumClaimPostedAmounts,
+  sumClaimCashAmounts,
   validatePaymentTotals,
 } from "../../../lib/payment-posting";
 import { claimStatusAfterPayment, parseEra835, remainingBalanceForClaim } from "../../../lib/era-835";
@@ -134,6 +138,60 @@ import { DEFAULT_CARE_CHECKLIST } from "../../../lib/patient-chart";
 
 function clean(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function acknowledgmentReference(batchNumber: string, response?: string | null) {
+  const match = String(response || "").match(/(?:ACK|REF)[=:*-]?([A-Z0-9-]+)/i);
+  return match?.[1] ? `ACK-${match[1]}` : `ACK-${batchNumber}`;
+}
+
+function acknowledgmentText(input: {
+  batchNumber: string;
+  payerName: string;
+  payerIdentifier?: string | null;
+  claimCount: string | number;
+  response?: string | null;
+  transmittedAt?: string | null;
+  transmittedBy?: string | null;
+}) {
+  return [
+    "PRACX CLEARINGHOUSE ACKNOWLEDGMENT",
+    "===================================",
+    `Acknowledgment reference: ${acknowledgmentReference(input.batchNumber, input.response)}`,
+    `Batch number: ${input.batchNumber}`,
+    `Payer: ${input.payerName}`,
+    `Payer ID: ${input.payerIdentifier || "SELF_PAY"}`,
+    `Claims acknowledged: ${input.claimCount}`,
+    `Received at: ${input.transmittedAt || "Not available"}`,
+    `Recorded by: ${input.transmittedBy || "Not available"}`,
+    `Clearinghouse response: ${input.response || "Not available"}`,
+    "",
+    "This acknowledgment is a PRACX transmission record for the submitted batch.",
+  ].join("\n");
+}
+
+function simplePdfFromText(text: string) {
+  const lines = text.split("\n").flatMap((line) => {
+    if (line.length <= 92) return [line];
+    return line.match(/.{1,92}(?:\s|$)/g)?.map((part) => part.trimEnd()) || [line];
+  });
+  const content = ["BT", "/F1 11 Tf", "50 760 Td", ...lines.map((line, index) => `${index ? "0 -16 Td " : ""}(${line.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)")}) Tj`), "ET"].join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n `).join("\n")}\ntrailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return pdf;
 }
 
 function safeJsonParse<T>(input: string): T | null {
@@ -399,17 +457,20 @@ async function refreshPaymentEntryTotals(
   },
 ) {
   const lines = await db.select().from(claimPayments).where(eq(claimPayments.paymentId, paymentId));
-  const claimPaidTotal = sumClaimPostedAmounts(lines);
+  const [payment] = await db.select().from(paymentEntries).where(eq(paymentEntries.id, paymentId)).limit(1);
+  const claimPaidTotal = payment?.paymentMethod === "ERA" ? sumClaimCashAmounts(lines) : sumClaimPostedAmounts(lines);
   const postedClaimCount = lines.filter((row) => row.postingStatus === "posted").length;
   const status = derivePaymentEntryStatus({
     claimPayments: lines,
     hasMismatchError: extras?.hasMismatchError,
   });
   const now = new Date().toISOString();
-  const [payment] = await db.select().from(paymentEntries).where(eq(paymentEntries.id, paymentId)).limit(1);
-  const effective = payment
-    ? calculatePaymentTotalEffective(payment)
-    : claimPaidTotal;
+  const zeroCheckEra = payment?.paymentMethod === "ERA" && moneyNumber(payment.paymentAmount) === 0 && claimPaidTotal > 0;
+  const effective = zeroCheckEra
+    ? claimPaidTotal
+    : payment
+      ? calculatePaymentTotalEffective(payment)
+      : claimPaidTotal;
   const reconciliation = validatePaymentTotals({
     paymentAmount: payment?.paymentAmount,
     offsetAmount: payment?.offsetAmount,
@@ -417,6 +478,7 @@ async function refreshPaymentEntryTotals(
     incentiveAmount: payment?.incentiveAmount,
     otherAdjustments: payment?.otherAdjustments,
     paymentTotalEffective: moneyFixed(effective),
+    paymentMethod: payment?.paymentMethod,
     claimPayments: lines,
   });
   const patch: Record<string, string | null> = {
@@ -436,6 +498,25 @@ async function refreshPaymentEntryTotals(
   return { lines, claimPaidTotal, postedClaimCount, status };
 }
 
+async function preflightPaymentClaims(db: ReturnType<typeof getDb>, lines: Array<typeof claimPayments.$inferSelect>) {
+  const allocated = new Map<string, number>();
+  for (const line of lines.filter((row) => row.postingStatus !== "posted")) {
+    const [claim] = await db.select().from(claims).where(eq(claims.id, line.claimId)).limit(1);
+    if (!claim) return "A mapped claim no longer exists. Review the payment.";
+    const paid = Number(line.paidAmount);
+    const adjustment = Number(line.adjustmentAmount);
+    if (!Number.isFinite(paid) || !Number.isFinite(adjustment) || paid < 0 || adjustment < 0) return `Claim ${claim.claimNumber}: invalid payment or adjustment amount.`;
+    const outstanding = claimOutstandingBalance(claim);
+    if (paid + adjustment === 0 && ((!line.denialCode?.trim() && moneyNumber(line.patientResponsibility) <= 0) || outstanding <= 0.009)) return `Claim ${claim.claimNumber}: no valid payment, responsibility or open denial allocation.`;
+    const total = (allocated.get(line.claimId) || 0) + paid + adjustment;
+    if (total > outstanding + 0.001) return `Claim ${claim.claimNumber}: allocations exceed remaining balance ${outstanding.toFixed(2)}.`;
+    allocated.set(line.claimId, total);
+    const services = await db.select().from(claimPaymentServiceLines).where(eq(claimPaymentServiceLines.claimPaymentId, line.id));
+    if (services.some((row) => row.postingStatus === "error" || row.errorMessage)) return `Claim ${claim.claimNumber}: correct CPT errors before posting.`;
+  }
+  return null;
+}
+
 async function applyClaimPaymentLine(
   db: ReturnType<typeof getDb>,
   input: {
@@ -450,23 +531,31 @@ async function applyClaimPaymentLine(
   const paid = moneyNumber(input.line.paidAmount);
   const adjustment = moneyNumber(input.line.adjustmentAmount);
   const outstanding = claimOutstandingBalance(claim);
-  if (paid < 0 || adjustment < 0 || paid + adjustment <= 0) {
-    return { ok: false as const, error: "Enter a positive paid or adjustment amount." };
+  // PR indicates responsibility, not a denial; CO-45 is a contractual reduction.
+  const denialCodes = (input.line.denialCode || "").split(",").map((code) => code.trim()).filter((code) => code && !/^PR[- ]?\d/i.test(code) && code.toUpperCase() !== "CO-45");
+  const hasDenial = denialCodes.length > 0;
+  const hasResponsibility = moneyNumber(input.line.patientResponsibility) > 0;
+  if (hasDenial && paid + adjustment <= 0 && outstanding <= 0.009) {
+    return { ok: false as const, error: "Denial mapped to a claim with no remaining balance; review the claim before posting." };
+  }
+  if (paid < 0 || adjustment < 0 || (paid + adjustment <= 0 && !hasDenial && !hasResponsibility)) {
+    return { ok: false as const, error: hasDenial ? "Enter a valid denial allocation." : "Enter a positive paid or adjustment amount." };
   }
   if (paid + adjustment > outstanding + 0.001) {
     return { ok: false as const, error: `Payment and adjustment exceed remaining balance of ${outstanding.toFixed(2)}.` };
   }
   const paymentDate = input.payment.paymentDate || input.today;
-  const postingDate = input.today;
+  const postingDate = input.payment.postingDate || input.today;
   const paymentRowId = crypto.randomUUID();
   const payerName = input.payment.payerId
     ? (await db.select().from(payers).where(eq(payers.id, input.payment.payerId)).limit(1))[0]?.name || null
     : null;
   await db.insert(payments).values({
     id: paymentRowId,
+    paymentEntryId: input.payment.id,
     claimId: claim.id,
     remittanceId: input.payment.remittanceId || null,
-    paymentType: "insurance",
+    paymentType: input.payment.payerType === "patient" ? "patient" : "insurance",
     payerName,
     amount: moneyFixed(paid),
     adjustmentAmount: moneyFixed(adjustment),
@@ -485,19 +574,21 @@ async function applyClaimPaymentLine(
   });
   const patientResp = moneyNumber(input.line.patientResponsibility) > 0
     ? moneyFixed(input.line.patientResponsibility)
-    : remaining.toFixed(2);
-  const denialCodes = (input.line.denialCode || "").split(",").map((part) => part.trim()).filter(Boolean);
+    : hasDenial && paid + adjustment <= 0
+      ? "0.00"
+      : remaining.toFixed(2);
   const nextStatus = remaining <= 0.009
     ? "paid"
     : (paid + adjustment > 0 ? claimStatusAfterPayment(remaining, denialCodes) : (denialCodes.length ? "denied" : claim.status));
   const currentLife = deriveClaimLifecycle(claim);
-  const nextLife = lifecycleAfterAdjudication({
+  const nextLife = input.payment.payerType === "patient" ? (remaining <= 0.009 ? "closed" : currentLife) : lifecycleAfterAdjudication({
     current: currentLife,
     denied: remaining > 0.009 && paid <= 0.009 && denialCodes.length > 0,
     remaining,
     hasSecondary: await patientHasCoveragePriority(db, claim.patientId, "secondary"),
     hasTertiary: await patientHasCoveragePriority(db, claim.patientId, "tertiary"),
   });
+  const nextAction = remaining <= 0.009 ? "paid_close" : input.payment.payerType === "patient" ? "bill_to_patient" : await nextResponsibilityAction(db, claim, input.payment.payerId);
   const reopenPrep = isLifecycleOnClaimPrep(nextLife);
   await db.update(claims).set({
     totalPaid: newPaid.toFixed(2),
@@ -516,6 +607,7 @@ async function applyClaimPaymentLine(
     } : {}),
     updatedAt: new Date().toISOString(),
   }).where(eq(claims.id, claim.id));
+  await db.update(claimPaymentServiceLines).set({ nextAction, updatedAt: new Date().toISOString() }).where(eq(claimPaymentServiceLines.claimPaymentId, input.line.id));
   await recordClaimWorkflowEvent(db, {
     claimId: claim.id,
     previousStatus: currentLife,
@@ -525,6 +617,7 @@ async function applyClaimPaymentLine(
     actorName: input.sourceLabel,
   });
   const ledgerBase = {
+    paymentEntryId: input.payment.id,
     organizationId: DEFAULT_ORGANIZATION_ID,
     patientId: claim.patientId,
     claimId: claim.id,
@@ -540,9 +633,9 @@ async function applyClaimPaymentLine(
     await db.insert(ledgerTransactions).values({
       id: crypto.randomUUID(),
       ...ledgerBase,
-      transactionType: "insurance_payment",
+      transactionType: input.payment.payerType === "patient" ? "patient_payment" : "insurance_payment",
       amount: `-${moneyFixed(paid)}`,
-      description: `Insurance payment · ${input.payment.paymentNumber}`,
+      description: `${input.payment.payerType === "patient" ? "Patient" : "Insurance"} payment · ${input.payment.paymentNumber}`,
       referenceNumber: input.payment.referenceNumber || input.payment.paymentNumber,
     });
   }
@@ -563,7 +656,45 @@ async function applyClaimPaymentLine(
     postedAt: now,
     updatedAt: now,
   }).where(eq(claimPayments.id, input.line.id));
+  await db.update(claimPaymentServiceLines).set({
+    postingStatus: "posted",
+    errorMessage: null,
+    postedAt: now,
+    updatedAt: now,
+  }).where(eq(claimPaymentServiceLines.claimPaymentId, input.line.id));
   return { ok: true as const, claimId: claim.id, remaining: remaining.toFixed(2) };
+}
+
+async function nextResponsibilityAction(db: ReturnType<typeof getDb>, claim: typeof claims.$inferSelect, currentPayerId: string | null) {
+  const [patient] = await db.select().from(patients).where(eq(patients.id, claim.patientId)).limit(1);
+  const coverages = await db.select({ coverage: patientCoverages, plan: insurancePlans }).from(patientCoverages).leftJoin(insurancePlans, eq(insurancePlans.id, patientCoverages.planId)).where(and(eq(patientCoverages.patientId, claim.patientId), eq(patientCoverages.status, "active")));
+  const ordered = coverages.filter((row) => ["secondary", "tertiary"].includes(row.coverage.priority)).sort((a, b) => (a.coverage.priority === "secondary" ? 1 : 2) - (b.coverage.priority === "secondary" ? 1 : 2));
+  const next = ordered.find((row) => row.plan?.payerId && row.plan.payerId !== currentPayerId);
+  if (next) return next.coverage.priority === "tertiary" ? "bill_to_tertiary" : "bill_to_secondary";
+  const age = patient?.dateOfBirth ? Math.floor((Date.now() - new Date(patient.dateOfBirth).getTime()) / 31557600000) : 99;
+  const pediatric = age < 18;
+  return pediatric ? "bill_to_guarantor" : "bill_to_patient";
+}
+
+async function syncClaimPaymentFromServiceLines(db: ReturnType<typeof getDb>, claimPaymentId: string) {
+  const [parent] = await db.select().from(claimPayments).where(eq(claimPayments.id, claimPaymentId));
+  if (!parent || parent.postingStatus === "posted") return null;
+  const sourceDetails = parent.adjustmentDetails ? JSON.parse(parent.adjustmentDetails) : {};
+  const serviceRows = await db.select().from(claimPaymentServiceLines).where(eq(claimPaymentServiceLines.claimPaymentId, claimPaymentId));
+  if (!serviceRows.length) return null;
+  const sum = (field: "allowedAmount" | "paidAmount" | "adjustmentAmount" | "patientResponsibility") => serviceRows.reduce((total, row) => total + moneyNumber(row[field]), 0).toFixed(2);
+  const patch = {
+    allowedAmount: sum("allowedAmount"),
+    paidAmount: sum("paidAmount"),
+    adjustmentAmount: moneyFixed(moneyNumber(sum("adjustmentAmount")) + (sourceDetails.adjustments || []).filter((row: { group: string }) => row.group !== "PR").reduce((total: number, row: { amount: string }) => total + moneyNumber(row.amount), 0)),
+    patientResponsibility: parent.adjustmentDetails
+      ? moneyFixed(moneyNumber(sum("patientResponsibility")) + moneyNumber(sourceDetails.unallocatedResponsibility))
+      : (moneyNumber(sum("patientResponsibility")) > 0 ? sum("patientResponsibility") : parent.patientResponsibility),
+    denialCode: Array.from(new Set(serviceRows.flatMap((row) => String(row.denialCode || "").split(",").map((code) => code.trim()).filter(Boolean)))).join(", ") || null,
+    updatedAt: new Date().toISOString(),
+  };
+  await db.update(claimPayments).set(patch).where(eq(claimPayments.id, claimPaymentId));
+  return patch;
 }
 
 async function recordClaimWorkflowEvent(
@@ -823,6 +954,8 @@ function claim837({
     : claim.employmentRelated === "Y"
       ? "EM"
       : claim.otherAccidentRelated === "Y" ? "OA" : "";
+  const billingOtherIdQualifier = String(claim.billingProviderOtherIdQualifier || "").trim().toUpperCase();
+  const billingOtherId = String(claim.billingProviderOtherId || "").replace(/[^A-Z0-9]/gi, "");
   const transactionSegments = [
     `ST*837*0001*005010X222A1~`,
     `BHT*0019*00*${claim.claimNumber}*20${ymd}*${hm}*CH~`,
@@ -830,6 +963,9 @@ function claim837({
     `NM1*40*2*${payer?.name || "FILE EXPORT"}*****46*${payer?.payerId || "FILE"}~`,
     `HL*1**20*1~`,
     `NM1*85*2*PRACX HEALTH NETWORK*****XX*${provider.npi || "0000000000"}~`,
+    ...(billingOtherIdQualifier && billingOtherId
+      ? billingOtherIdQualifier === "ZZ" ? [`PRV*BI*PXC*${billingOtherId}~`] : [`REF*${billingOtherIdQualifier}*${billingOtherId}~`]
+      : provider.taxonomyCode ? [`PRV*BI*PXC*${String(provider.taxonomyCode).replace(/[^A-Z0-9]/gi, "")}~`] : []),
     `HL*2*1*22*${subscriberIsPatient ? "0" : "1"}~`,
     `SBR*P*${relationshipCode}*******${filingIndicator}~`,
     `NM1*IL*1*${snapshot.subscriberLastName || coverage?.subscriberLastName || patient.lastName}*${snapshot.subscriberFirstName || coverage?.subscriberFirstName || patient.firstName}****MI*${snapshot.memberId || coverage?.memberId || ""}~`,
@@ -853,6 +989,8 @@ function claim837({
       `LX*${index + 1}~`,
       `SV1*HC:${line.procedureCode}${line.modifiers ? `:${line.modifiers.replaceAll(",", ":")}` : ""}*${line.chargeAmount}*UN*${line.units}***${line.diagnosisPointers}~`,
       `DTP*472*D8*${line.serviceDateFrom.replaceAll("-", "")}~`,
+      ...(line.renderingNpi ? [`NM1*82*1*${provider.lastName || ""}*${provider.firstName || ""}****XX*${line.renderingNpi}~`] : []),
+      ...(line.renderingOtherIdQualifier === "ZZ" && line.renderingOtherId ? [`PRV*PE*PXC*${String(line.renderingOtherId).replace(/[^A-Z0-9]/gi, "")}~`] : []),
     ]),
   ];
   const segments = [
@@ -1003,6 +1141,7 @@ async function loadWorkspace() {
     claimTransmissionLogRows,
     paymentEntryRows,
     claimPaymentRows,
+    claimPaymentServiceLineRows,
     paymentLogRows,
     remittanceRows,
     paymentRows,
@@ -1246,6 +1385,7 @@ async function loadWorkspace() {
         patientName: sql<string>`${patients.firstName} || ' ' || ${patients.lastName}`,
         payerName: payers.name,
         payerClaimPayerId: payers.payerId,
+        patientName: sql<string>`${patients.firstName} || ' ' || ${patients.lastName}`,
         payerClearinghouseRoute: payers.clearinghouseRoute,
         providerName: sql<string>`${providers.firstName} || ' ' || ${providers.lastName}`,
         facilityName: facilities.name,
@@ -1293,6 +1433,11 @@ async function loadWorkspace() {
       .select({
         id: paymentEntries.id,
         paymentNumber: paymentEntries.paymentNumber,
+        payerType: paymentEntries.payerType,
+        patientId: paymentEntries.patientId,
+        encounterId: paymentEntries.encounterId,
+        serviceDate: paymentEntries.serviceDate,
+        paymentPurpose: paymentEntries.paymentPurpose,
         payerId: paymentEntries.payerId,
         remittanceId: paymentEntries.remittanceId,
         paymentAmount: paymentEntries.paymentAmount,
@@ -1302,8 +1447,11 @@ async function loadWorkspace() {
         otherAdjustments: paymentEntries.otherAdjustments,
         paymentTotalEffective: paymentEntries.paymentTotalEffective,
         paymentMethod: paymentEntries.paymentMethod,
+        methodDetails: paymentEntries.methodDetails,
         referenceNumber: paymentEntries.referenceNumber,
         paymentDate: paymentEntries.paymentDate,
+        postingDate: paymentEntries.postingDate,
+        patientName: sql<string>`${patients.firstName} || ' ' || ${patients.lastName}`,
         notes: paymentEntries.notes,
         paymentStatus: paymentEntries.paymentStatus,
         claimCount: paymentEntries.claimCount,
@@ -1321,6 +1469,7 @@ async function loadWorkspace() {
       })
       .from(paymentEntries)
       .leftJoin(payers, eq(payers.id, paymentEntries.payerId))
+      .leftJoin(patients, eq(patients.id, paymentEntries.patientId))
       .where(eq(paymentEntries.organizationId, DEFAULT_ORGANIZATION_ID))
       .orderBy(desc(paymentEntries.createdAt)),
     db
@@ -1332,6 +1481,7 @@ async function loadWorkspace() {
         paidAmount: claimPayments.paidAmount,
         adjustmentAmount: claimPayments.adjustmentAmount,
         patientResponsibility: claimPayments.patientResponsibility,
+        adjustmentDetails: claimPayments.adjustmentDetails,
         denialCode: claimPayments.denialCode,
         postingStatus: claimPayments.postingStatus,
         errorMessage: claimPayments.errorMessage,
@@ -1344,12 +1494,14 @@ async function loadWorkspace() {
         totalCharge: claims.totalCharge,
         totalPaid: claims.totalPaid,
         totalAdjustment: claims.totalAdjustment,
+        remainingBalance: claims.remainingBalance,
         claimStatus: claims.status,
       })
       .from(claimPayments)
       .innerJoin(claims, eq(claims.id, claimPayments.claimId))
       .innerJoin(patients, eq(patients.id, claims.patientId))
       .orderBy(asc(claims.claimNumber)),
+    db.select().from(claimPaymentServiceLines).orderBy(asc(claimPaymentServiceLines.serviceDate), asc(claimPaymentServiceLines.procedureCode)),
     db.select().from(paymentLogs).orderBy(desc(paymentLogs.createdAt)),
     db
       .select({
@@ -1357,6 +1509,7 @@ async function loadWorkspace() {
         payerId: remittances.payerId,
         traceNumber: remittances.traceNumber,
         paymentDate: remittances.paymentDate,
+        postingDate: remittances.postingDate,
         amount: remittances.amount,
         source: remittances.source,
         status: remittances.status,
@@ -1380,6 +1533,8 @@ async function loadWorkspace() {
     db
       .select({
         id: ledgerTransactions.id,
+        paymentEntryId: ledgerTransactions.paymentEntryId,
+        paymentNumber: paymentEntries.paymentNumber,
         patientId: ledgerTransactions.patientId,
         claimId: ledgerTransactions.claimId,
         transactionType: ledgerTransactions.transactionType,
@@ -1397,6 +1552,7 @@ async function loadWorkspace() {
         claimNumber: claims.claimNumber,
       })
       .from(ledgerTransactions)
+      .leftJoin(paymentEntries, eq(paymentEntries.id, ledgerTransactions.paymentEntryId))
       .innerJoin(patients, eq(patients.id, ledgerTransactions.patientId))
       .leftJoin(claims, eq(claims.id, ledgerTransactions.claimId))
       .where(eq(ledgerTransactions.organizationId, DEFAULT_ORGANIZATION_ID))
@@ -1464,6 +1620,7 @@ async function loadWorkspace() {
     claimTransmissionLogs: claimTransmissionLogRows,
     paymentEntries: paymentEntryRows,
     claimPayments: claimPaymentRows,
+    claimPaymentServiceLines: claimPaymentServiceLineRows,
     paymentLogs: paymentLogRows,
     remittances: remittanceRows,
     payments: paymentRows,
@@ -1742,6 +1899,16 @@ async function scrubClaimRecord(
   const [plan] = coverage[0]
     ? await db.select().from(insurancePlans).where(eq(insurancePlans.id, coverage[0].planId)).limit(1)
     : [];
+  const [claimPayer] = claim.payerId
+    ? await db.select().from(payers).where(eq(payers.id, claim.payerId)).limit(1)
+    : [];
+  if (claim.payerId && !claimPayer) {
+    rawIssues.push({ severity: "error", field: "Payer routing", box: "11c", message: "The claim references a payer that is no longer configured.", suggestion: "Select an active payer and verify its payer ID before billing." });
+  } else if (claimPayer && claimPayer.status !== "active") {
+    rawIssues.push({ severity: "error", field: "Payer routing", box: "11c", message: "The selected payer is inactive.", suggestion: "Activate the payer or select the current payer configuration." });
+  } else if (claimPayer && !String(claimPayer.clearinghouseRoute || "").trim()) {
+    rawIssues.push({ severity: "warning", field: "Payer routing", box: "11c", message: `${claimPayer.name} has no clearinghouse route and will be prepared as paper (CMS-1500).`, suggestion: "Configure the payer's clearinghouse route if electronic submission is required." });
+  }
   if (plan?.requiresAuthorization === "yes" && !(claim.priorAuthorizationNumber || coverage[0]?.authorizationNumber)) {
     rawIssues.push({ severity: "error", field: "Authorization Number", box: "23", message: "Missing authorization number.", suggestion: "Enter the payer authorization before billing." });
   }
@@ -1788,13 +1955,40 @@ async function scrubClaimRecord(
   try { diagnoses = JSON.parse(claim.diagnosisCodes || encounter[0]?.diagnosisCodes || "[]") as string[]; } catch { diagnoses = []; }
   if (!diagnoses.length) rawIssues.push({ severity: "error", field: "Diagnosis", box: "21", message: "No diagnosis code is linked.", suggestion: "Add at least one ICD-10-CM diagnosis." });
   if (diagnoses.length > 12) rawIssues.push({ severity: "error", field: "Diagnosis", box: "21", message: "A CMS-1500 claim can report no more than 12 diagnoses.", suggestion: "Split services related to additional diagnoses into another claim." });
+  if (encounter[0]) {
+    if (!["signed", "ready_to_bill", "billed"].includes(String(encounter[0].status))) {
+      rawIssues.push({ severity: "error", field: "Encounter signature", box: "Clinical", message: "The clinical encounter is not signed or ready for billing.", suggestion: "Complete and sign the encounter before submitting the claim." });
+    }
+    if (!String(encounter[0].assessment || "").trim()) {
+      rawIssues.push({ severity: "error", field: "Clinical assessment", box: "Clinical", message: "The encounter is missing an assessment.", suggestion: "Document the clinician's assessment before billing." });
+    }
+    if (!String(encounter[0].treatmentPlan || "").trim()) {
+      rawIssues.push({ severity: "error", field: "Treatment plan", box: "Clinical", message: "The encounter is missing a treatment plan.", suggestion: "Document the plan, orders, counseling, or follow-up before billing." });
+    }
+    if (!String(encounter[0].historyOfPresentIllness || encounter[0].clinicalNote || "").trim()) {
+      rawIssues.push({ severity: "warning", field: "Clinical documentation", box: "Clinical", message: "No HPI or clinical note is attached to the encounter.", suggestion: "Add the relevant history supporting today's services." });
+    }
+  }
+  if (diagnoses.length) {
+    const diagnosisMasterRows = await db.select({ code: diagnosisCodeMaster.code }).from(diagnosisCodeMaster).where(eq(diagnosisCodeMaster.status, "active"));
+    const knownDiagnosisCodes = new Set(diagnosisMasterRows.map((row) => row.code.toUpperCase()));
+    for (const diagnosis of diagnoses) {
+      if (!knownDiagnosisCodes.has(String(diagnosis).trim().toUpperCase())) {
+        rawIssues.push({ severity: "error", field: "Diagnosis code", box: "21", message: `Diagnosis code ${diagnosis} is not in the active ICD-10-CM directory.`, suggestion: "Choose an active diagnosis code from the directory or add it to coding configuration." });
+      }
+    }
+  }
   if (!lines.length) rawIssues.push({ severity: "error", field: "Service lines", box: "24", message: "Claim has no service lines.", suggestion: "Add a procedure line." });
   if (lines.length > 50) rawIssues.push({ severity: "error", field: "Service lines", box: "24", message: "Current NUCC instructions require claims with more than 50 service lines to be split.", suggestion: "Split the claim into compliant groups." });
   if (lines.some((line) => Number(line.chargeAmount) <= 0)) rawIssues.push({ severity: "error", field: "Charges", box: "24F", message: "A service line has a zero charge.", suggestion: "Enter a valid charge amount." });
+  const procedureMasterRows = await db.select({ code: procedureCodes.code }).from(procedureCodes).where(eq(procedureCodes.status, "active"));
+  const knownProcedureCodes = new Set(procedureMasterRows.map((row) => row.code.toUpperCase()));
   for (const line of lines) {
+    if (!knownProcedureCodes.has(String(line.procedureCode || "").trim().toUpperCase())) rawIssues.push({ severity: "error", field: `Line ${line.lineNumber} procedure code`, box: "24D", message: `Procedure code ${line.procedureCode || "(blank)"} is not in the active CPT/HCPCS directory.`, suggestion: "Select an active procedure code from the directory or configure the code before billing." });
     if (!/^\d{2}$/.test(line.placeOfService)) rawIssues.push({ severity: "error", field: `Line ${line.lineNumber} place of service`, box: "24B", message: "Place of service must contain two digits.", suggestion: "Select a valid CMS place-of-service code." });
     if (line.modifiers && (line.modifiers.split(",").length > 4 || line.modifiers.split(",").some((modifier) => !/^[A-Z0-9]{2}$/.test(modifier)))) rawIssues.push({ severity: "error", field: `Line ${line.lineNumber} modifiers`, box: "24D", message: "A line supports no more than four two-character modifiers.", suggestion: "Correct the modifier list." });
     if (!/^[A-L]{1,4}$/.test(line.diagnosisPointers)) rawIssues.push({ severity: "error", field: `Line ${line.lineNumber} diagnosis pointers`, box: "24E", message: "Diagnosis pointers must contain one to four letters from A through L.", suggestion: "Link the service line to valid Box 21 diagnoses." });
+    else if (line.diagnosisPointers.split("").some((pointer) => pointer.charCodeAt(0) - 65 >= diagnoses.length)) rawIssues.push({ severity: "error", field: `Line ${line.lineNumber} diagnosis pointers`, box: "24E", message: "A service line points to a diagnosis that is not present in Box 21.", suggestion: "Add the referenced diagnosis or correct the line pointer." });
     if (Number(line.units) <= 0) rawIssues.push({ severity: "error", field: `Line ${line.lineNumber} units`, box: "24G", message: "Days or units must be greater than zero.", suggestion: "Enter the number of services, days, minutes or units." });
     if (line.epsdtIndicator && line.epsdtReasonCode) rawIssues.push({ severity: "error", field: `Line ${line.lineNumber} EPSDT`, box: "24H", message: "EPSDT Y/N and an EPSDT reason code cannot be reported together.", suggestion: "Use the payer-required indicator or reason code, not both." });
     if (Boolean(line.renderingOtherIdQualifier) !== Boolean(line.renderingOtherId)) {
@@ -1973,6 +2167,26 @@ export async function POST(request: Request) {
       const patientDobExternal = clean(bundle.patient?.dateOfBirth) || null;
       const externalId = clean(bundle.externalIds?.appointment || bundle.externalIds?.encounter || bundle.externalIds?.patient || "") || null;
       const firstError = allIssues.find((issue) => issue.severity === "error");
+
+      // EHRs retry webhooks and polling windows. Treat an identical source/event
+      // reference as the same intake event so retries cannot create duplicate
+      // patients, encounters, or downstream claims.
+      if (externalId) {
+        const [existing] = await db
+          .select({ id: integrationInboundEvents.id, status: integrationInboundEvents.status })
+          .from(integrationInboundEvents)
+          .where(and(
+            eq(integrationInboundEvents.organizationId, DEFAULT_ORGANIZATION_ID),
+            eq(integrationInboundEvents.sourceSystem, clean(bundle.sourceSystem) || "unknown"),
+            eq(integrationInboundEvents.eventType, clean(bundle.eventType) || "day_appointment"),
+            eq(integrationInboundEvents.externalId, externalId),
+          ))
+          .orderBy(desc(integrationInboundEvents.receivedAt))
+          .limit(1);
+        if (existing) {
+          return Response.json({ id: existing.id, status: existing.status, duplicate: true, externalId }, { status: 200 });
+        }
+      }
 
       await db.insert(integrationInboundEvents).values({
         id,
@@ -3619,6 +3833,21 @@ export async function POST(request: Request) {
       return Response.json({ id }, { status: 201 });
     }
 
+    if (action === "updateProcedure") {
+      const id = clean(payload.id);
+      const [procedure] = await db.select().from(procedureCodes).where(eq(procedureCodes.id, id)).limit(1);
+      if (!procedure) return Response.json({ error: "Procedure code not found." }, { status: 404 });
+      const charge = clean(payload.defaultCharge);
+      if (!/^\d+(\.\d{1,2})?$/.test(charge)) return Response.json({ error: "Enter a valid practice charge with up to two decimal places." }, { status: 400 });
+      await db.update(procedureCodes).set({
+        description: clean(payload.description) || procedure.description,
+        defaultCharge: money(charge),
+        defaultPlaceOfService: clean(payload.defaultPlaceOfService) || procedure.defaultPlaceOfService,
+        requiresAuthorization: payload.requiresAuthorization ? "yes" : "no",
+      }).where(eq(procedureCodes.id, id));
+      return Response.json({ id, code: procedure.code, defaultCharge: money(charge) });
+    }
+
     if (action === "createFeeSchedule") {
       const name = clean(payload.name);
       if (!name) return Response.json({ error: "Fee schedule name is required." }, { status: 400 });
@@ -3936,6 +4165,43 @@ export async function POST(request: Request) {
         message: "Sample patients, scheduler visits, encounters, claims, batches, and a payment entry were loaded.",
         ...summary,
       });
+    }
+
+    if (action === "seedCollectionFixtures") {
+      if (currentUser.role.toLowerCase() !== "administrator") return Response.json({ error: "Only an administrator can load collection test data." }, { status: 403 });
+      const [provider] = await db.select().from(providers).where(eq(providers.organizationId, DEFAULT_ORGANIZATION_ID)).limit(1);
+      const [facility] = await db.select().from(facilities).where(eq(facilities.organizationId, DEFAULT_ORGANIZATION_ID)).limit(1);
+      const [payer] = await db.select().from(payers).where(eq(payers.organizationId, DEFAULT_ORGANIZATION_ID)).limit(1);
+      const [plan] = payer ? await db.select().from(insurancePlans).where(eq(insurancePlans.payerId, payer.id)).limit(1) : [];
+      const [secondaryPayer] = await db.select().from(payers).where(and(eq(payers.organizationId, DEFAULT_ORGANIZATION_ID), sql`${payers.id} <> ${payer?.id || ""}`)).limit(1);
+      const [secondaryPlan] = secondaryPayer ? await db.select().from(insurancePlans).where(eq(insurancePlans.payerId, secondaryPayer.id)).limit(1) : [];
+      if (!provider || !facility || !payer || !plan) return Response.json({ error: "Create a provider, facility, payer and plan before loading collection fixtures." }, { status: 409 });
+      const now = new Date().toISOString();
+      const fixtures = [
+        { key: "DENIAL", name: "Collection Denial", dos: "2025-01-18", billed: "2025-01-20", charge: "680.00", lifecycle: "denied_pri", status: "denied", code: "CO-16" },
+        { key: "OPEN", name: "Collection Open", dos: "2025-03-12", billed: "2025-03-15", charge: "425.00", lifecycle: "sent_pri", status: "submitted", code: "" },
+        { key: "SECONDARY", name: "Collection Secondary", dos: "2025-05-07", billed: "2025-05-10", charge: "910.00", lifecycle: "paid_pri", status: "partially_paid", code: "PR-2" },
+        { key: "SECONDARY2", name: "Collection Secondary 2", dos: "2025-07-09", billed: "2025-07-12", charge: "540.00", lifecycle: "paid_pri", status: "partially_paid", code: "PR-2" },
+        { key: "PATIENT", name: "Collection Patient", dos: "2025-06-22", billed: "2025-06-25", charge: "275.00", lifecycle: "paid_pri", status: "partially_paid", code: "PR-3" },
+      ];
+      const created: string[] = [];
+      for (const fixture of fixtures) {
+        const claimNumber = `COLL-DEMO-${fixture.key}`;
+        const [existing] = await db.select().from(claims).where(and(eq(claims.organizationId, DEFAULT_ORGANIZATION_ID), eq(claims.claimNumber, claimNumber))).limit(1);
+        if (existing) { created.push(claimNumber); continue; }
+        const patientId = crypto.randomUUID();
+        const claimId = crypto.randomUUID();
+        const coverageId = crypto.randomUUID();
+        const firstName = fixture.name.split(" ")[1] || "Demo";
+        const lastName = "Patient";
+        await db.insert(patients).values({ id: patientId, organizationId: DEFAULT_ORGANIZATION_ID, accountNumber: `COLL-${fixture.key}`, firstName, lastName, dateOfBirth: "1982-05-14", sex: "unknown", addressLine1: `${200 + created.length} Collection Lane`, city: "Orlando", state: "FL", postalCode: `3281${created.length}`, phone: `407-555-${String(2300 + created.length)}`, email: `${fixture.key.toLowerCase()}@example.test`, status: "active", createdAt: now, updatedAt: now });
+        await db.insert(patientCoverages).values({ id: coverageId, patientId, planId: plan.id, coverageType: "health", priority: "primary", memberId: `COLL-MEMBER-${fixture.key}`, groupNumber: "COLL-GROUP", relationship: "self", subscriberFirstName: firstName, subscriberLastName: lastName, subscriberDateOfBirth: "1982-05-14", subscriberSex: "unknown", effectiveDate: "2024-01-01", status: "active", createdAt: now });
+        if (secondaryPlan && fixture.key.startsWith("SECONDARY")) await db.insert(patientCoverages).values({ id: crypto.randomUUID(), patientId, planId: secondaryPlan.id, coverageType: "health", priority: "secondary", memberId: `COLL-SECONDARY-${fixture.key}`, groupNumber: "COLL-SECONDARY-GROUP", relationship: "self", subscriberFirstName: firstName, subscriberLastName: lastName, subscriberDateOfBirth: "1982-05-14", subscriberSex: "unknown", effectiveDate: "2024-01-01", status: "active", createdAt: now });
+        await db.insert(claims).values({ id: claimId, organizationId: DEFAULT_ORGANIZATION_ID, claimNumber, patientId, encounterId: null, coverageId, payerId: payer.id, providerId: provider.id, facilityId: facility.id, referringProviderId: null, insuranceTypeCode: "other", otherPlanIndicator: "N", employmentRelated: "N", autoAccidentRelated: "N", otherAccidentRelated: "N", claimConditionCodes: "[]", icdIndicator: "0", diagnosisCodes: JSON.stringify(["I10"]), claimDataSnapshot: JSON.stringify({ fixture: "collection_ar_test", denialCode: fixture.code }), dateOfService: fixture.dos, transactionDate: fixture.billed, postingDate: fixture.billed, firstBilledDate: fixture.billed, lastBilledDate: fixture.billed, status: fixture.status as "denied" | "submitted" | "partially_paid", lifecycleStatus: fixture.lifecycle, workflowStatus: "submitted", scrubberStatus: "passed", scrubberMessages: "[]", scrubRulesChecked: "[]", scrubErrorCount: "0", totalCharge: fixture.charge, totalPaid: fixture.key === "SECONDARY" ? "250.00" : fixture.key === "PATIENT" ? "100.00" : "0.00", totalAdjustment: "0.00", patientResponsibility: fixture.key === "SECONDARY" ? "660.00" : fixture.key === "PATIENT" ? "175.00" : fixture.charge, remainingBalance: fixture.key === "SECONDARY" ? "660.00" : fixture.key === "PATIENT" ? "175.00" : fixture.charge, submissionMode: "test", submissionMethod: "electronic", createdAt: now, updatedAt: now });
+        await db.insert(claimLines).values({ id: crypto.randomUUID(), claimId, lineNumber: "1", procedureCode: "99213", modifiers: null, diagnosisPointers: "A", units: "1", chargeAmount: fixture.charge, placeOfService: "11", renderingNpi: provider.npi || null, serviceDateFrom: fixture.dos, serviceDateTo: fixture.dos });
+        created.push(claimNumber);
+      }
+      return Response.json({ created: created.length, claimNumbers: created, message: "Collection Arena fixtures are ready." });
     }
 
     if (action === "saveClaimCorrections") {
@@ -4766,12 +5032,15 @@ export async function POST(request: Request) {
         createdBy: batch.createdByName,
         createdAt: batch.createdAt,
         ediFileName: batch.ediFileName,
-        transmissionStatus: "sent",
+        transmissionStatus: "accepted",
         transmittedAt: now,
         clearinghouseResponse: ack,
       });
       await db.update(claimBatches).set({
-        status: "sent",
+        // The local clearinghouse adapter returns an immediate 999/277CA
+        // acknowledgment, so the batch is recorded as accepted rather than
+        // leaving it in an ambiguous "sent" state.
+        status: "accepted",
         clearinghouseResponse: ack,
         transmittedAt: now,
         transmittedByName: currentUser.fullName,
@@ -4783,7 +5052,7 @@ export async function POST(request: Request) {
         batchId: id,
         transmissionTime: now,
         clearinghouseResponse: ack,
-        status: "sent",
+        status: "accepted",
       });
       const members = await db.select().from(claimBatchMembers).where(eq(claimBatchMembers.batchId, id));
       for (const member of members) {
@@ -4832,7 +5101,7 @@ export async function POST(request: Request) {
           });
         }
       }
-      return Response.json({ id, status: "sent", clearinghouseResponse: ack, transmittedAt: now });
+      return Response.json({ id, status: "accepted", clearinghouseResponse: ack, transmittedAt: now });
     }
 
     if (action === "markPaperBatchMailed") {
@@ -4897,9 +5166,36 @@ export async function POST(request: Request) {
 
     if (action === "downloadBatchFile") {
       const id = clean(payload.id);
-      const kind = clean(payload.kind) === "proof" ? "proof" : "edi";
+      const requestedKind = clean(payload.kind);
+      const kind = requestedKind === "proof" || requestedKind === "ackTxt" || requestedKind === "ackPdf" ? requestedKind : "edi";
       const [batch] = await db.select().from(claimBatches).where(eq(claimBatches.id, id)).limit(1);
       if (!batch) return Response.json({ error: "Batch not found." }, { status: 404 });
+      if (kind === "ackTxt" || kind === "ackPdf") {
+        if (!batch.clearinghouseResponse || !batch.transmittedAt) {
+          return Response.json({ error: "No clearinghouse acknowledgment has been recorded for this batch." }, { status: 404 });
+        }
+        const payerName = batch.payerId
+          ? (await db.select().from(payers).where(eq(payers.id, batch.payerId)).limit(1))[0]?.name || "Self pay"
+          : "Self pay";
+        const text = acknowledgmentText({
+          batchNumber: batch.batchNumber,
+          payerName,
+          payerIdentifier: batch.payerId ? (await db.select().from(payers).where(eq(payers.id, batch.payerId)).limit(1))[0]?.payerId : null,
+          claimCount: batch.claimCount,
+          response: batch.clearinghouseResponse,
+          transmittedAt: batch.transmittedAt,
+          transmittedBy: batch.transmittedByName,
+        });
+        if (kind === "ackTxt") {
+          return Response.json({ id, filename: `${batch.batchNumber}_ACK.txt`, content: text, acknowledgmentReference: acknowledgmentReference(batch.batchNumber, batch.clearinghouseResponse) });
+        }
+        return Response.json({
+          id,
+          filename: `${batch.batchNumber}_ACK.pdf`,
+          base64: btoa(simplePdfFromText(text)),
+          acknowledgmentReference: acknowledgmentReference(batch.batchNumber, batch.clearinghouseResponse),
+        });
+      }
       if (kind === "edi") {
         if (!batch.ediContent || !batch.ediFileName) {
           return Response.json({ error: "No EDI file on this batch." }, { status: 404 });
@@ -4999,10 +5295,27 @@ export async function POST(request: Request) {
     }
 
     if (action === "createPaymentEntry") {
-      const payerId = clean(payload.payerId);
-      if (!payerId) return Response.json({ error: "Select a payer for this payment entry." }, { status: 400 });
-      const [payer] = await db.select().from(payers).where(eq(payers.id, payerId)).limit(1);
-      if (!payer) return Response.json({ error: "Payer not found." }, { status: 404 });
+      const payerType = clean(payload.payerType) || "payer";
+      if (!["payer", "patient"].includes(payerType)) return Response.json({ error: "Select Payer or Patient." }, { status: 400 });
+      const payerId = payerType === "payer" ? clean(payload.payerId) : null;
+      const patientId = payerType === "patient" ? clean(payload.patientId) : null;
+      const encounterId = payerType === "patient" ? clean(payload.encounterId) || null : null;
+      const serviceDate = payerType === "patient" ? clean(payload.serviceDate) || null : null;
+      const paymentPurpose = payerType === "patient" ? clean(payload.paymentPurpose) : null;
+      if (payerType === "patient") {
+        const [patient] = await db.select().from(patients).where(and(eq(patients.id, patientId || ""), eq(patients.organizationId, DEFAULT_ORGANIZATION_ID))).limit(1);
+        if (!patient) return Response.json({ error: "Select a patient from the search results." }, { status: 400 });
+        if (!paymentPurpose || !["copay", "deductible", "coinsurance", "past_balance", "advance"].includes(paymentPurpose)) return Response.json({ error: "Select what the patient payment is for." }, { status: 400 });
+        if (encounterId) {
+          const [encounter] = await db.select().from(encounters).where(and(eq(encounters.id, encounterId), eq(encounters.patientId, patient.id))).limit(1);
+          if (!encounter || (serviceDate && encounter.dateOfService.slice(0, 10) !== serviceDate)) return Response.json({ error: "Select a visit belonging to this patient and use its service date." }, { status: 400 });
+          if (!serviceDate) return Response.json({ error: "The selected visit requires its service date." }, { status: 400 });
+        } else if (paymentPurpose !== "advance") return Response.json({ error: "Choose the visit/DOS for this copay, deductible, coinsurance, or balance payment. Use Advance only for a payment without a visit yet." }, { status: 400 });
+        if (clean(payload.remittanceId) || normalizePaymentMethod(payload.paymentMethod) === "ERA") return Response.json({ error: "Patient payments cannot be linked to an insurance ERA." }, { status: 400 });
+      } else {
+        const [payer] = await db.select().from(payers).where(and(eq(payers.id, payerId || ""), eq(payers.organizationId, DEFAULT_ORGANIZATION_ID))).limit(1);
+        if (!payer) return Response.json({ error: "Select a payer from the search results." }, { status: 400 });
+      }
       const paymentAmount = money(payload.paymentAmount || payload.amount);
       const offsetAmount = money(payload.offsetAmount);
       const refundAmount = money(payload.refundAmount);
@@ -5019,6 +5332,9 @@ export async function POST(request: Request) {
         return Response.json({ error: "Enter a payment amount or adjustment total greater than zero." }, { status: 400 });
       }
       const paymentMethod = normalizePaymentMethod(payload.paymentMethod);
+      let methodDetails: string;
+      try { methodDetails = JSON.stringify(paymentMethodDetails(paymentMethod, payload)); }
+      catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Invalid payment method details." }, { status: 400 }); }
       const remittanceId = clean(payload.remittanceId) || null;
       if (remittanceId) {
         const [remittance] = await db.select().from(remittances).where(eq(remittances.id, remittanceId)).limit(1);
@@ -5032,6 +5348,11 @@ export async function POST(request: Request) {
         organizationId: DEFAULT_ORGANIZATION_ID,
         paymentNumber,
         payerId,
+        payerType,
+        patientId,
+        encounterId,
+        serviceDate,
+        paymentPurpose,
         remittanceId,
         paymentAmount,
         offsetAmount,
@@ -5040,8 +5361,10 @@ export async function POST(request: Request) {
         otherAdjustments,
         paymentTotalEffective,
         paymentMethod,
+        methodDetails,
         referenceNumber: clean(payload.referenceNumber || payload.checkNumber || payload.eftReference) || null,
         paymentDate: clean(payload.paymentDate) || today,
+        postingDate: clean(payload.postingDate) || today,
         notes: clean(payload.notes) || null,
         paymentStatus: "pending",
         reconciliationStatus: "pending",
@@ -5056,7 +5379,7 @@ export async function POST(request: Request) {
       await recordPaymentLog(db, {
         paymentId: id,
         actionType: "Create",
-        message: `Payment entry ${paymentNumber} created · ${paymentMethod} · amount ${paymentAmount} · effective ${paymentTotalEffective}`,
+        message: `Payment entry ${paymentNumber} created · ${paymentMethod} · amount ${paymentAmount} · effective ${paymentTotalEffective}${paymentPurpose ? ` · purpose ${paymentPurpose}` : ""}${serviceDate ? ` · DOS ${serviceDate} · encounter ${encounterId}` : ""}`,
       });
       return Response.json({ id, paymentNumber, paymentStatus: "pending", paymentTotalEffective }, { status: 201 });
     }
@@ -5068,14 +5391,19 @@ export async function POST(request: Request) {
       if (payment.paymentStatus === "fully_posted") {
         return Response.json({ error: "Fully posted payments cannot be re-populated." }, { status: 409 });
       }
-      if (!payment.payerId) return Response.json({ error: "Payment has no payer." }, { status: 400 });
+      if (normalizePaymentMethod(payment.paymentMethod) === "ERA") {
+        return Response.json({ error: "ERA allocations come only from the uploaded 835. Review unmatched ERA claims or edit their CPT allocations; do not populate unrelated payer claims." }, { status: 409 });
+      }
+      if (payment.payerType === "patient" ? !payment.patientId : !payment.payerId) return Response.json({ error: "Payment has no selected payer or patient." }, { status: 400 });
       const claimIds = Array.isArray(payload.claimIds)
         ? payload.claimIds.map((value) => clean(value)).filter(Boolean)
         : [];
+      if (!claimIds.length) return Response.json({ error: "Select the claims to add to this manual payment." }, { status: 400 });
       let candidateClaims = (await db.select().from(claims).where(and(
         eq(claims.organizationId, DEFAULT_ORGANIZATION_ID),
-        eq(claims.payerId, payment.payerId),
+        payment.payerType === "patient" ? eq(claims.patientId, payment.patientId!) : eq(claims.payerId, payment.payerId!),
       ))).filter((row) => claimOutstandingBalance(row) > 0.009);
+      if (payment.encounterId && payment.serviceDate) candidateClaims = candidateClaims.filter((row) => row.dateOfService.slice(0, 10) === payment.serviceDate);
       if (claimIds.length) {
         candidateClaims = candidateClaims.filter((row) => claimIds.includes(row.id));
       }
@@ -5090,8 +5418,9 @@ export async function POST(request: Request) {
       for (const claim of candidateClaims) {
         if (existingClaimIds.has(claim.id)) continue;
         const seed = suggestClaimPaymentSeed({ method, claim });
+        const claimPaymentId = crypto.randomUUID();
         await db.insert(claimPayments).values({
-          id: crypto.randomUUID(),
+          id: claimPaymentId,
           paymentId,
           claimId: claim.id,
           allowedAmount: seed.allowedAmount,
@@ -5129,7 +5458,7 @@ export async function POST(request: Request) {
         return Response.json({ error: "Fully posted payments cannot be edited." }, { status: 409 });
       }
       const now = new Date().toISOString();
-      const hasHeaderPatch = ["paymentAmount", "offsetAmount", "refundAmount", "incentiveAmount", "otherAdjustments", "notes"].some((key) => key in payload);
+      const hasHeaderPatch = ["paymentAmount", "offsetAmount", "refundAmount", "incentiveAmount", "otherAdjustments", "paymentDate", "postingDate", "notes"].some((key) => key in payload);
       if (hasHeaderPatch) {
         const paymentAmount = money(payload.paymentAmount ?? payment.paymentAmount);
         const offsetAmount = money(payload.offsetAmount ?? payment.offsetAmount);
@@ -5150,6 +5479,8 @@ export async function POST(request: Request) {
           incentiveAmount,
           otherAdjustments,
           paymentTotalEffective,
+          paymentDate: clean(payload.paymentDate) || payment.paymentDate,
+          postingDate: clean(payload.postingDate) || payment.postingDate,
           notes: "notes" in payload ? (clean(payload.notes) || null) : payment.notes,
           updatedAt: now,
         }).where(eq(paymentEntries.id, paymentId));
@@ -5176,7 +5507,27 @@ export async function POST(request: Request) {
         }).where(eq(claimPayments.id, lineId));
         updated += 1;
       }
-      if (!hasHeaderPatch && !lines.length) {
+      const serviceLines = Array.isArray(payload.serviceLines) ? payload.serviceLines as Array<Record<string, unknown>> : [];
+      let serviceUpdated = 0;
+      for (const line of serviceLines) {
+        const lineId = clean(line.id);
+        if (!lineId) continue;
+        const [existing] = await db.select().from(claimPaymentServiceLines).where(and(eq(claimPaymentServiceLines.id, lineId), eq(claimPaymentServiceLines.paymentId, paymentId))).limit(1);
+        if (!existing || existing.postingStatus === "posted") continue;
+        await db.update(claimPaymentServiceLines).set({
+          allowedAmount: money(line.allowedAmount ?? existing.allowedAmount),
+          paidAmount: money(line.paidAmount ?? existing.paidAmount),
+          adjustmentAmount: money(line.adjustmentAmount ?? existing.adjustmentAmount),
+          patientResponsibility: money(line.patientResponsibility ?? existing.patientResponsibility),
+          denialCode: clean(line.denialCode) || null,
+          eobPage: clean(line.eobPage) || null,
+          nextAction: clean(line.nextAction) || null,
+          updatedAt: now,
+        }).where(eq(claimPaymentServiceLines.id, lineId));
+        await syncClaimPaymentFromServiceLines(db, existing.claimPaymentId);
+        serviceUpdated += 1;
+      }
+      if (!hasHeaderPatch && !lines.length && !serviceLines.length) {
         return Response.json({ error: "Provide payment adjustments or claim payment lines to update." }, { status: 400 });
       }
       await refreshPaymentEntryTotals(db, paymentId, {
@@ -5189,10 +5540,10 @@ export async function POST(request: Request) {
         paymentId,
         actionType: "Correction",
         message: hasHeaderPatch
-          ? `Corrected payment totals/adjustments and ${updated} claim payment line(s).`
-          : `Corrected ${updated} claim payment line(s).`,
+          ? `Corrected payment totals/adjustments, ${updated} claim payment line(s), and ${serviceUpdated} CPT line(s).`
+          : `Corrected ${updated} claim payment line(s) and ${serviceUpdated} CPT line(s).`,
       });
-      return Response.json({ id: paymentId, updated, headerUpdated: hasHeaderPatch });
+      return Response.json({ id: paymentId, updated, serviceUpdated, headerUpdated: hasHeaderPatch });
     }
 
     if (action === "autoPostPayment" || action === "retryPostPayment") {
@@ -5202,10 +5553,17 @@ export async function POST(request: Request) {
       if (payment.paymentStatus === "fully_posted") {
         return Response.json({ error: "Payment is already fully posted." }, { status: 409 });
       }
+      if (normalizePaymentMethod(payment.paymentMethod) === "ERA") {
+        const [era] = await db.select().from(remittances).where(eq(remittances.id, payment.remittanceId || "")).limit(1);
+        const mappingError = era ? eraMappingError(era.unmatchedJson) : "Linked ERA not found. Review this payment before posting.";
+        if (mappingError) return Response.json({ error: mappingError }, { status: 409 });
+      }
       const lines = await db.select().from(claimPayments).where(eq(claimPayments.paymentId, paymentId));
       if (!lines.length) {
         return Response.json({ error: "Populate claim payments before auto-posting." }, { status: 409 });
       }
+      for (const line of lines) await syncClaimPaymentFromServiceLines(db, line.id);
+      const synchronizedLines = await db.select().from(claimPayments).where(eq(claimPayments.paymentId, paymentId));
       const validation = validatePaymentTotals({
         paymentAmount: payment.paymentAmount,
         offsetAmount: payment.offsetAmount,
@@ -5213,7 +5571,8 @@ export async function POST(request: Request) {
         incentiveAmount: payment.incentiveAmount,
         otherAdjustments: payment.otherAdjustments,
         paymentTotalEffective: payment.paymentTotalEffective,
-        claimPayments: lines,
+        paymentMethod: payment.paymentMethod,
+        claimPayments: synchronizedLines,
       });
       if (!validation.matched) {
         const now = new Date().toISOString();
@@ -5244,7 +5603,9 @@ export async function POST(request: Request) {
         }, { status: 409 });
       }
 
-      const pending = lines.filter((row) => row.postingStatus !== "posted");
+      const pending = synchronizedLines.filter((row) => row.postingStatus !== "posted");
+      const preflightError = await preflightPaymentClaims(db, synchronizedLines);
+      if (preflightError) return Response.json({ error: preflightError }, { status: 409 });
       const posted: string[] = [];
       const failed: Array<{ id: string; claimId: string; error: string }> = [];
       for (const line of pending) {
@@ -5321,6 +5682,9 @@ export async function POST(request: Request) {
       const claimId = clean(payload.claimId);
       const [payment] = await db.select().from(paymentEntries).where(eq(paymentEntries.id, paymentId)).limit(1);
       if (!payment) return Response.json({ error: "Payment entry not found." }, { status: 404 });
+      if (normalizePaymentMethod(payment.paymentMethod) === "ERA") {
+        return Response.json({ error: "Use the ERA Post action so the entire remittance is validated before posting." }, { status: 409 });
+      }
       const [line] = await db.select().from(claimPayments).where(and(
         eq(claimPayments.paymentId, paymentId),
         claimPaymentId ? eq(claimPayments.id, claimPaymentId) : eq(claimPayments.claimId, claimId),
@@ -5388,6 +5752,10 @@ export async function POST(request: Request) {
       const amount = money(payload.amount || parsed?.paymentAmount || "0");
       const paymentDate = clean(payload.paymentDate) || parsed?.paymentDate || today;
       let payerId = clean(payload.payerId) || null;
+      if (!payerId && parsed?.payerIdentifier) {
+        const payerRows = await db.select().from(payers);
+        payerId = payerRows.find((row) => row.payerId.toLowerCase() === parsed.payerIdentifier.toLowerCase())?.id || null;
+      }
       if (!payerId && parsed?.payerName) {
         const payerRows = await db.select().from(payers);
         payerId = payerRows.find((row) => row.name.toLowerCase() === parsed.payerName.toLowerCase())?.id || null;
@@ -5399,6 +5767,7 @@ export async function POST(request: Request) {
         payerId,
         traceNumber,
         paymentDate,
+        postingDate: clean(payload.postingDate) || today,
         amount,
         source: clean(payload.source) || "835_file",
         status: "received",
@@ -5419,12 +5788,213 @@ export async function POST(request: Request) {
       }, { status: 201 });
     }
 
+    if (action === "seedEraClaims") {
+      const eraId = clean(payload.id || payload.eraId || payload.remittanceId);
+      const [era] = await db.select().from(remittances).where(eq(remittances.id, eraId)).limit(1);
+      if (!era?.raw835) return Response.json({ error: "ERA file content was not found." }, { status: 404 });
+      const parsed = parseEra835(era.raw835);
+      if (!parsed.ok) return Response.json({ error: parsed.error || "ERA parse failed." }, { status: 409 });
+      const payerId = era.payerId || (await db.select().from(payers)).find((row) => row.name.toLowerCase() === parsed.payerName.toLowerCase())?.id || null;
+      const [provider] = await db.select().from(providers).where(eq(providers.organizationId, DEFAULT_ORGANIZATION_ID)).limit(1);
+      const [facility] = await db.select().from(facilities).where(eq(facilities.organizationId, DEFAULT_ORGANIZATION_ID)).limit(1);
+      if (!provider || !facility) return Response.json({ error: "A provider and facility are required to create sample claims." }, { status: 409 });
+      // Build a small but realistic coverage set for the ERA fixtures. This lets
+      // staff exercise secondary, patient-responsibility and pediatric-guarantor
+      // routing without manually creating insurance records first.
+      const payerRows = await db.select().from(payers).where(eq(payers.organizationId, DEFAULT_ORGANIZATION_ID));
+      const now = new Date().toISOString();
+      const primaryPayer = payerId ? payerRows.find((row) => row.id === payerId) : payerRows[0];
+      const secondaryPayer = payerRows.find((row) => row.payerId === "DEMO-SECONDARY-01") || (await (async () => {
+        const createdPayerId = crypto.randomUUID();
+        await db.insert(payers).values({ id: createdPayerId, organizationId: DEFAULT_ORGANIZATION_ID, name: "Demo Secondary Health Plan", payerId: "DEMO-SECONDARY-01", claimFilingIndicator: "CI", payerType: "Commercial", status: "active", responseDays: "14", createdAt: now });
+        return (await db.select().from(payers).where(eq(payers.id, createdPayerId)).limit(1))[0];
+      })());
+      const ensurePlan = async (payer: typeof payers.$inferSelect, name: string) => {
+        const [existingPlan] = await db.select().from(insurancePlans).where(and(eq(insurancePlans.payerId, payer.id), eq(insurancePlans.name, name))).limit(1);
+        if (existingPlan) return existingPlan;
+        const planId = crypto.randomUUID();
+        await db.insert(insurancePlans).values({ id: planId, payerId: payer.id, name, planType: "PPO", defaultGroupNumber: "DEMO-GROUP", status: "active", createdAt: now });
+        return (await db.select().from(insurancePlans).where(eq(insurancePlans.id, planId)).limit(1))[0];
+      };
+      const primaryPlan = primaryPayer ? await ensurePlan(primaryPayer, `${primaryPayer.name} Demo Plan`) : null;
+      const secondaryPlan = secondaryPayer ? await ensurePlan(secondaryPayer, "Demo Secondary PPO") : null;
+      const created: string[] = [];
+      for (const [index, eraClaim] of parsed.claims.entries()) {
+        const existing = await db.select().from(claims).where(and(eq(claims.organizationId, DEFAULT_ORGANIZATION_ID), eq(claims.claimNumber, eraClaim.claimControlNumber))).limit(1);
+        if (existing.length) {
+          const existingClaim = existing[0];
+          const existingPatient = (await db.select().from(patients).where(eq(patients.id, existingClaim.patientId)).limit(1))[0];
+          if (existingPatient && existingPatient.addressLine1 === "ERA sample record") {
+            const firstName = eraClaim.patientFirstName || existingPatient.firstName;
+            const lastName = eraClaim.patientLastName || existingPatient.lastName;
+            const dateOfBirth = index === parsed.claims.length - 1 ? "2016-04-18" : `19${String(70 + index).padStart(2, "0")}-0${(index % 8) + 1}-1${index + 1}`;
+            const addressLine1 = `${120 + index} Demo Avenue`;
+            const city = ["Orlando", "Tampa", "Jacksonville", "Miami"][index % 4];
+            await db.update(patients).set({ firstName, lastName, dateOfBirth, addressLine1, city, state: "FL", postalCode: `3280${index + 1}`, phone: `407-555-${String(1200 + index)}`, email: `${firstName.toLowerCase()}.${lastName.toLowerCase().replace(/[^a-z0-9]/gi, "")}@example.test`, updatedAt: now }).where(eq(patients.id, existingPatient.id));
+          }
+          if (existingPatient && primaryPlan) {
+            const existingCoverage = await db.select().from(patientCoverages).where(eq(patientCoverages.patientId, existingPatient.id));
+            const primaryCoverage = existingCoverage.find((row) => row.priority === "primary") || null;
+            if (!primaryCoverage) {
+              const coverageId = crypto.randomUUID();
+              await db.insert(patientCoverages).values({ id: coverageId, patientId: existingPatient.id, planId: primaryPlan.id, coverageType: "health", priority: "primary", memberId: `ERA-${eraClaim.claimControlNumber}`, groupNumber: "ERA-DEMO-GROUP", relationship: "self", subscriberFirstName: existingPatient.firstName, subscriberLastName: existingPatient.lastName, subscriberDateOfBirth: existingPatient.dateOfBirth, subscriberSex: "unknown", effectiveDate: "2025-01-01", status: "active", createdAt: now });
+              await db.update(claims).set({ coverageId, updatedAt: now }).where(eq(claims.id, existingClaim.id));
+            }
+            if (secondaryPlan && index % 2 === 0 && index !== parsed.claims.length - 1 && !existingCoverage.some((row) => row.priority === "secondary")) {
+              await db.insert(patientCoverages).values({ id: crypto.randomUUID(), patientId: existingPatient.id, planId: secondaryPlan.id, coverageType: "health", priority: "secondary", memberId: `SEC-${eraClaim.claimControlNumber}`, groupNumber: "SEC-DEMO-GROUP", relationship: "self", subscriberFirstName: existingPatient.firstName, subscriberLastName: existingPatient.lastName, subscriberDateOfBirth: existingPatient.dateOfBirth, subscriberSex: "unknown", effectiveDate: "2025-01-01", status: "active", createdAt: now });
+            }
+          }
+          if (era.paymentEntryId) {
+            const existingClaimPayments = await db.select().from(claimPayments).where(and(eq(claimPayments.paymentId, era.paymentEntryId), eq(claimPayments.claimId, existingClaim.id)));
+            const nextAction = await nextResponsibilityAction(db, existingClaim, payerId);
+            for (const existingClaimPayment of existingClaimPayments) {
+              await db.update(claimPaymentServiceLines).set({ nextAction, updatedAt: now }).where(eq(claimPaymentServiceLines.claimPaymentId, existingClaimPayment.id));
+            }
+          }
+          continue;
+        }
+        const patientId = crypto.randomUUID();
+        const claimId = crypto.randomUUID();
+        const firstName = eraClaim.patientFirstName || "ERA";
+        const lastName = eraClaim.patientLastName || `Claim ${eraClaim.claimControlNumber}`;
+        // One fixture is pediatric so the guarantor route can be tested; the
+        // remaining records use adult dates and distinct, recognizable addresses.
+        const dateOfBirth = index === parsed.claims.length - 1 ? "2016-04-18" : `19${String(70 + index).padStart(2, "0")}-0${(index % 8) + 1}-1${index + 1}`;
+        const addressLine1 = `${120 + index} Demo Avenue`;
+        const city = ["Orlando", "Tampa", "Jacksonville", "Miami"][index % 4];
+        const state = "FL";
+        const postalCode = `3280${index + 1}`;
+        await db.insert(patients).values({ id: patientId, organizationId: DEFAULT_ORGANIZATION_ID, accountNumber: `ERA-${eraClaim.claimControlNumber}`, firstName, lastName, dateOfBirth, sex: index === parsed.claims.length - 1 ? "unknown" : "unknown", addressLine1, city, state, postalCode, phone: `407-555-${String(1200 + index)}`, email: `${firstName.toLowerCase()}.${lastName.toLowerCase().replace(/[^a-z0-9]/gi, "")}@example.test`, status: "active", createdAt: now, updatedAt: now });
+        let primaryCoverageId: string | null = null;
+        if (primaryPlan) {
+          primaryCoverageId = crypto.randomUUID();
+          await db.insert(patientCoverages).values({ id: primaryCoverageId, patientId, planId: primaryPlan.id, coverageType: "health", priority: "primary", memberId: `ERA-${eraClaim.claimControlNumber}`, groupNumber: "ERA-DEMO-GROUP", relationship: "self", subscriberFirstName: firstName, subscriberLastName: lastName, subscriberDateOfBirth: dateOfBirth, subscriberSex: "unknown", subscriberAddressLine1: addressLine1, subscriberCity: city, subscriberState: state, subscriberPostalCode: postalCode, effectiveDate: "2025-01-01", status: "active", createdAt: now });
+        }
+        // Alternating secondary coverage gives the demo both secondary billing
+        // and direct patient-responsibility paths. The pediatric fixture is
+        // intentionally left without secondary coverage so it routes to a guarantor.
+        if (secondaryPlan && index % 2 === 0 && index !== parsed.claims.length - 1) {
+          await db.insert(patientCoverages).values({ id: crypto.randomUUID(), patientId, planId: secondaryPlan.id, coverageType: "health", priority: "secondary", memberId: `SEC-${eraClaim.claimControlNumber}`, groupNumber: "SEC-DEMO-GROUP", relationship: "self", subscriberFirstName: firstName, subscriberLastName: lastName, subscriberDateOfBirth: dateOfBirth, subscriberSex: "unknown", subscriberAddressLine1: addressLine1, subscriberCity: city, subscriberState: state, subscriberPostalCode: postalCode, effectiveDate: "2025-01-01", status: "active", createdAt: now });
+        }
+        await db.insert(claims).values({ id: claimId, organizationId: DEFAULT_ORGANIZATION_ID, claimNumber: eraClaim.claimControlNumber, patientId, encounterId: null, coverageId: primaryCoverageId, payerId, providerId: provider.id, facilityId: facility.id, referringProviderId: null, insuranceTypeCode: "other", otherPlanIndicator: "N", employmentRelated: "N", autoAccidentRelated: "N", otherAccidentRelated: "N", claimConditionCodes: "[]", icdIndicator: "0", diagnosisCodes: "[]", claimDataSnapshot: JSON.stringify({ source: "ERA sample", eraTrace: era.traceNumber, fixture: "era_patient_responsibility_demo" }), dateOfService: eraClaim.dateOfService || era.paymentDate, transactionDate: today, postingDate: today, status: "ready", lifecycleStatus: "bill_to_pri", workflowStatus: "ready_to_bill", scrubberStatus: "passed", scrubberMessages: "[]", scrubRulesChecked: "[]", scrubErrorCount: "0", totalCharge: eraClaim.chargeAmount, totalPaid: "0.00", totalAdjustment: "0.00", patientResponsibility: eraClaim.patientResponsibility, remainingBalance: eraClaim.chargeAmount, submissionMode: "test", submissionMethod: "electronic", createdAt: now, updatedAt: now });
+        for (const [lineIndex, service] of eraClaim.serviceLines.entries()) await db.insert(claimLines).values({ id: crypto.randomUUID(), claimId, lineNumber: String(lineIndex + 1), procedureCode: service.procedureCode, modifiers: null, diagnosisPointers: "[]", units: service.units, chargeAmount: service.chargeAmount, placeOfService: "11", renderingNpi: provider.npi || null, serviceDateFrom: service.serviceDate || eraClaim.dateOfService || era.paymentDate, serviceDateTo: service.serviceDate || eraClaim.dateOfService || era.paymentDate });
+        created.push(eraClaim.claimControlNumber);
+      }
+      if (era.paymentEntryId) {
+        const attached = await db.select().from(claimPayments).where(eq(claimPayments.paymentId, era.paymentEntryId));
+        if (!attached.length) {
+          await db.delete(paymentLogs).where(eq(paymentLogs.paymentId, era.paymentEntryId));
+          await db.delete(paymentEntries).where(eq(paymentEntries.id, era.paymentEntryId));
+          await db.update(remittances).set({ paymentEntryId: null, processedStatus: "pending", status: "received", unmatchedJson: "[]", errorMessage: null, processedAt: null }).where(eq(remittances.id, eraId));
+        }
+      }
+      return Response.json({ id: eraId, created: created.length, claimNumbers: created, message: `Created ${created.length} ERA sample claim(s). Re-upload or restart this ERA to match them.` });
+    }
+
+    if (action === "createEraTestVariant") {
+      const eraId = clean(payload.id || payload.eraId || payload.remittanceId);
+      const [sourceEra] = await db.select().from(remittances).where(eq(remittances.id, eraId)).limit(1);
+      if (!sourceEra?.raw835) return Response.json({ error: "The saved ERA does not contain the original 835 content." }, { status: 404 });
+      const variant = clean(payload.variant) || "denial";
+      if (!["denial", "zero_check"].includes(variant)) return Response.json({ error: "Supported test variants are denial and zero_check." }, { status: 400 });
+      const segmentDelimiter = sourceEra.raw835.includes("~") ? "~" : "\n";
+      const variantStamp = Date.now().toString().slice(-6);
+      const denialRaw835 = sourceEra.raw835.split(segmentDelimiter).map((segment) => {
+        const parts = segment.trim().split("*");
+        const tag = (parts[0] || "").toUpperCase();
+        if (tag === "BPR" && variant === "zero_check") parts[2] = "0.00";
+        if (tag === "BPR" && variant === "denial") parts[2] = "0.00";
+        if (tag === "CLP" && variant === "denial") {
+          parts[1] = `${parts[1] || "CLAIM"}-D${variantStamp}`; // force fresh demo claims instead of closed originals
+          parts[2] = "4"; // denied claim status
+          parts[4] = "0.00"; // no payer payment
+          parts[5] = "0.00"; // no patient payment in the ERA
+        }
+        if (tag === "SVC" && variant === "denial") parts[3] = "0.00"; // zero paid at CPT level
+        if (tag === "CAS" && variant === "denial") {
+          // Preserve group/code pairs so denial codes remain visible, but make
+          // the adjustment amount zero so the claim stays open for follow-up.
+          for (let index = 3; index < parts.length; index += 3) {
+            if (parts[index]) parts[index] = "0.00";
+          }
+        }
+        return parts.join("*");
+      }).filter(Boolean).join(segmentDelimiter);
+      const now = new Date().toISOString();
+      const traceNumber = `${sourceEra.traceNumber}-${variant.toUpperCase()}-${variantStamp}`;
+      const fileName = sourceEra.fileName.replace(/(\.835|\.dat)?$/i, `-${variant}-test.835`);
+      const parsed = parseEra835(denialRaw835);
+      const id = crypto.randomUUID();
+      await db.insert(remittances).values({
+        id,
+        payerId: sourceEra.payerId,
+        traceNumber,
+        paymentDate: sourceEra.paymentDate,
+        postingDate: today,
+        amount: "0.00",
+        source: "835_test_variant",
+        status: "received",
+        processedStatus: "pending",
+        fileName,
+        filePath: `era/${fileName}`,
+        unmatchedJson: "[]",
+        parseWarningsJson: JSON.stringify(parsed.ok ? parsed.warnings : [parsed.error || "Denial variant parse warning"]),
+        errorMessage: null,
+        raw835: denialRaw835,
+        receivedAt: now,
+      });
+      return Response.json({ id, fileName, traceNumber, amount: "0.00", claimCount: parsed.ok ? parsed.claims.length : 0, message: "Denial test ERA copy created. The original ERA was not changed." }, { status: 201 });
+    }
+
     if (action === "processEra" || action === "createPaymentFromEra") {
+      const autoPostRequested = payload.autoPost !== false;
       const eraId = clean(payload.id || payload.eraId || payload.remittanceId);
       const [era] = await db.select().from(remittances).where(eq(remittances.id, eraId)).limit(1);
       if (!era) return Response.json({ error: "ERA file not found." }, { status: 404 });
       if (era.paymentEntryId) {
-        return Response.json({ error: "This ERA already has a payment entry.", paymentEntryId: era.paymentEntryId }, { status: 409 });
+        const mappingError = eraMappingError(era.unmatchedJson);
+        if (autoPostRequested && mappingError) return Response.json({ error: mappingError }, { status: 409 });
+        if (!autoPostRequested) return Response.json({ error: "This ERA has already been started.", paymentEntryId: era.paymentEntryId }, { status: 409 });
+        const [existingPayment] = await db.select().from(paymentEntries).where(eq(paymentEntries.id, era.paymentEntryId)).limit(1);
+        if (!existingPayment) return Response.json({ error: "The ERA payment entry could not be found." }, { status: 409 });
+        const existingLines = await db.select().from(claimPayments).where(eq(claimPayments.paymentId, existingPayment.id));
+        if (!existingLines.length) return Response.json({ error: "Populate claim payments before processing this ERA." }, { status: 409 });
+        for (const line of existingLines) await syncClaimPaymentFromServiceLines(db, line.id);
+        const synchronizedLines = await db.select().from(claimPayments).where(eq(claimPayments.paymentId, existingPayment.id));
+        await refreshPaymentEntryTotals(db, existingPayment.id, { clearPostedAt: true });
+        const [validationPayment] = await db.select().from(paymentEntries).where(eq(paymentEntries.id, existingPayment.id)).limit(1);
+        const validation = validatePaymentTotals({
+          paymentAmount: validationPayment?.paymentAmount || existingPayment.paymentAmount,
+          offsetAmount: validationPayment?.offsetAmount || existingPayment.offsetAmount,
+          refundAmount: validationPayment?.refundAmount || existingPayment.refundAmount,
+          incentiveAmount: validationPayment?.incentiveAmount || existingPayment.incentiveAmount,
+          otherAdjustments: validationPayment?.otherAdjustments || existingPayment.otherAdjustments,
+          paymentTotalEffective: validationPayment?.paymentTotalEffective || existingPayment.paymentTotalEffective,
+          paymentMethod: validationPayment?.paymentMethod || existingPayment.paymentMethod,
+          claimPayments: synchronizedLines,
+        });
+        if (!validation.matched) {
+          await refreshPaymentEntryTotals(db, existingPayment.id, { autoPostResult: "failed", errorMessage: validation.mismatchMessage, hasMismatchError: true, clearPostedAt: true });
+          await db.update(remittances).set({ status: "review", errorMessage: validation.mismatchMessage }).where(eq(remittances.id, eraId));
+          return Response.json({ error: validation.mismatchMessage || "ERA payment total does not match allocated claim amounts.", paymentEntryId: existingPayment.id, difference: validation.difference }, { status: 409 });
+        }
+        let posted = 0;
+        const preflightError = await preflightPaymentClaims(db, synchronizedLines);
+        if (preflightError) return Response.json({ error: preflightError }, { status: 409 });
+        let postError: string | null = null;
+        for (const line of synchronizedLines.filter((row) => row.postingStatus !== "posted")) {
+          const result = await applyClaimPaymentLine(db, { payment: existingPayment, line, today, sourceLabel: "ERA 835 auto-post" });
+          if (!result.ok) { postError = result.error; break; }
+          posted += 1;
+        }
+        const refreshed = await refreshPaymentEntryTotals(db, existingPayment.id, { autoPostResult: postError ? "partial_error" : "success", errorMessage: postError, hasMismatchError: false });
+        if (!postError && refreshed.status === "fully_posted") {
+          await db.update(remittances).set({ status: "posted", postedAt: new Date().toISOString(), errorMessage: null }).where(eq(remittances.id, eraId));
+        } else if (postError) {
+          await db.update(remittances).set({ status: "review", errorMessage: postError }).where(eq(remittances.id, eraId));
+        }
+        await recordPaymentLog(db, { paymentId: existingPayment.id, actionType: postError ? "Error" : "AutoPost", message: postError || `ERA finalized · ${posted} claim(s) posted.` });
+        return Response.json({ id: eraId, paymentEntryId: existingPayment.id, paymentNumber: existingPayment.paymentNumber, matched: synchronizedLines.length, unmatched: 0, autoPosted: posted, started: false, autoPostError: postError, reconciliationStatus: refreshed.status });
       }
       if (!era.raw835) {
         await db.update(remittances).set({
@@ -5444,6 +6014,10 @@ export async function POST(request: Request) {
       }
 
       let payerId = era.payerId;
+      if (!payerId && parsed.payerIdentifier) {
+        const payerRows = await db.select().from(payers);
+        payerId = payerRows.find((row) => row.payerId.toLowerCase() === parsed.payerIdentifier.toLowerCase())?.id || null;
+      }
       if (!payerId && parsed.payerName) {
         const payerRows = await db.select().from(payers);
         payerId = payerRows.find((row) => row.name.toLowerCase() === parsed.payerName.toLowerCase())?.id || null;
@@ -5477,6 +6051,7 @@ export async function POST(request: Request) {
         paymentMethod: "ERA",
         referenceNumber: parsed.referenceNumber || era.traceNumber,
         paymentDate: parsed.paymentDate || era.paymentDate,
+        postingDate: era.postingDate || today,
         notes: `Auto-created from ERA ${era.traceNumber}`,
         paymentStatus: "pending",
         reconciliationStatus: "pending",
@@ -5489,7 +6064,7 @@ export async function POST(request: Request) {
         updatedAt: now,
       });
 
-      const unmatched: Array<{ claimControlNumber: string; reason: string; paidAmount: string }> = [];
+      const unmatched: Array<{ claimControlNumber: string; reason: string; paidAmount: string; patientLastName?: string; patientFirstName?: string; dateOfService?: string; serviceLines?: unknown[] }> = [];
       let matched = 0;
       for (const eraClaim of parsed.claims) {
         const control = eraClaim.claimControlNumber;
@@ -5505,27 +6080,79 @@ export async function POST(request: Request) {
             return number === target || number.endsWith(target) || target.endsWith(number);
           });
         }
+        // Many payers (including Oscar) return their own claim control number
+        // instead of PRACX's claim number. Use patient name + DOS as a safe
+        // secondary match, and leave ambiguous records in manual review.
+        if (!claim && (eraClaim.patientLastName || eraClaim.patientFirstName) && eraClaim.dateOfService) {
+          const candidates = await db.select().from(claims).where(eq(claims.organizationId, DEFAULT_ORGANIZATION_ID));
+          const patientRows = await db.select().from(patients);
+          const normalized = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const last = normalized(eraClaim.patientLastName || "");
+          const first = normalized(eraClaim.patientFirstName || "");
+          const matches = candidates.filter((row) => {
+            if (row.dateOfService !== eraClaim.dateOfService) return false;
+            const person = patientRows.find((patient) => patient.id === row.patientId);
+            if (!person) return false;
+            return normalized(person.lastName) === last && (!first || normalized(person.firstName) === first);
+          });
+          if (matches.length === 1) claim = matches[0];
+          else if (matches.length > 1) unmatched.push({ claimControlNumber: control, reason: "Multiple claims matched patient and service date", paidAmount: eraClaim.paidAmount, patientLastName: eraClaim.patientLastName, patientFirstName: eraClaim.patientFirstName, dateOfService: eraClaim.dateOfService, serviceLines: eraClaim.serviceLines });
+        }
         if (!claim) {
+          if (unmatched.some((row) => row.claimControlNumber === control)) continue;
           unmatched.push({
             claimControlNumber: control,
             reason: "Claim not found",
             paidAmount: eraClaim.paidAmount,
+            patientLastName: eraClaim.patientLastName,
+            patientFirstName: eraClaim.patientFirstName,
+            dateOfService: eraClaim.dateOfService,
+            serviceLines: eraClaim.serviceLines,
           });
           continue;
         }
+        const claimPaymentId = crypto.randomUUID();
         await db.insert(claimPayments).values({
-          id: crypto.randomUUID(),
+          id: claimPaymentId,
           paymentId,
           claimId: claim.id,
           allowedAmount: eraClaim.allowedAmount,
           paidAmount: eraClaim.paidAmount,
           adjustmentAmount: eraClaim.adjustmentAmount,
           patientResponsibility: eraClaim.patientResponsibility,
+          adjustmentDetails: JSON.stringify({ adjustments: eraClaim.adjustments, unallocatedResponsibility: moneyFixed(moneyNumber(eraClaim.patientResponsibility) - eraClaim.serviceLines.reduce((sum, line) => sum + moneyNumber(line.patientResponsibility), 0)) }),
           denialCode: eraClaim.denialCodes.join(", ") || null,
           postingStatus: "pending",
           createdAt: now,
           updatedAt: now,
         });
+        if (eraClaim.serviceLines.length) {
+          const claimServiceLines = await db.select().from(claimLines).where(eq(claimLines.claimId, claim.id));
+          const nextAction = await nextResponsibilityAction(db, claim, payerId);
+          for (const service of eraClaim.serviceLines) {
+            const matchingClaimLine = claimServiceLines.find((line) => line.procedureCode === service.procedureCode && line.serviceDateFrom === service.serviceDate);
+            await db.insert(claimPaymentServiceLines).values({
+              id: crypto.randomUUID(),
+              paymentId,
+              claimPaymentId,
+              claimLineId: matchingClaimLine?.id || null,
+              procedureCode: service.procedureCode,
+              serviceDate: service.serviceDate,
+              units: service.units,
+              chargeAmount: service.chargeAmount,
+              allowedAmount: service.allowedAmount,
+              paidAmount: service.paidAmount,
+              adjustmentAmount: service.adjustmentAmount,
+              patientResponsibility: service.patientResponsibility,
+              adjustmentDetails: JSON.stringify({ adjustments: service.adjustments }),
+              denialCode: service.denialCodes.join(", ") || null,
+              nextAction,
+              postingStatus: "pending",
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
+        }
         matched += 1;
       }
 
@@ -5535,23 +6162,60 @@ export async function POST(request: Request) {
         hasMismatchError: false,
         clearPostedAt: true,
       });
+      let autoPosted = 0;
+      let autoPostError: string | null = null;
+      // A fully matched ERA can be posted immediately. Any mismatch or
+      // ambiguous claim stays editable in Pending/Errors for staff review.
+      if (!unmatched.length && autoPostRequested) {
+        const [freshPayment] = await db.select().from(paymentEntries).where(eq(paymentEntries.id, paymentId)).limit(1);
+        const freshLines = await db.select().from(claimPayments).where(eq(claimPayments.paymentId, paymentId));
+        const validation = freshPayment ? validatePaymentTotals({
+          paymentAmount: freshPayment.paymentAmount,
+          offsetAmount: freshPayment.offsetAmount,
+          refundAmount: freshPayment.refundAmount,
+          incentiveAmount: freshPayment.incentiveAmount,
+          otherAdjustments: freshPayment.otherAdjustments,
+          paymentTotalEffective: freshPayment.paymentTotalEffective,
+          paymentMethod: freshPayment.paymentMethod,
+          claimPayments: freshLines,
+        }) : null;
+        const preflightError = await preflightPaymentClaims(db, freshLines);
+        if (!freshPayment || !validation?.matched || preflightError) {
+          autoPostError = preflightError || validation?.mismatchMessage || "ERA payment could not be balanced for automatic posting.";
+          await refreshPaymentEntryTotals(db, paymentId, { autoPostResult: "failed", errorMessage: autoPostError, hasMismatchError: true, clearPostedAt: true });
+        } else {
+          for (const line of freshLines) {
+            const result = await applyClaimPaymentLine(db, { payment: freshPayment, line, today, sourceLabel: "ERA 835 auto-post" });
+            if (!result.ok) { autoPostError = result.error; break; }
+            autoPosted += 1;
+          }
+          await refreshPaymentEntryTotals(db, paymentId, {
+            autoPostResult: autoPostError ? "partial_error" : "success",
+            errorMessage: autoPostError,
+            hasMismatchError: false,
+          });
+        }
+      }
       await recordPaymentLog(db, {
         paymentId,
         actionType: "Populate",
-        message: `ERA ${era.traceNumber} processed · ${matched} matched · ${unmatched.length} unmatched`,
+        message: `ERA ${era.traceNumber} processed · ${matched} matched · ${unmatched.length} unmatched · ${autoPosted} auto-posted${autoPostError ? ` · ${autoPostError}` : ""}`,
       });
       await db.update(remittances).set({
         payerId,
         amount: parsed.paymentAmount,
         paymentDate: parsed.paymentDate || era.paymentDate,
-        status: unmatched.length ? "review" : "matched",
+        postingDate: era.postingDate || today,
+        status: unmatched.length || autoPostError ? "review" : autoPostRequested && autoPosted === matched ? "posted" : "matched",
         processedStatus: "processed",
         paymentEntryId: paymentId,
         unmatchedJson: JSON.stringify(unmatched),
         parseWarningsJson: JSON.stringify(parsed.warnings || []),
-        errorMessage: unmatched.length ? `${unmatched.length} unmatched claim(s)` : null,
+        errorMessage: unmatched.length ? `${unmatched.length} unmatched claim(s)` : autoPostError,
+        postedAt: autoPostRequested && !unmatched.length && !autoPostError && autoPosted === matched ? now : null,
         processedAt: now,
       }).where(eq(remittances.id, eraId));
+      const [finalPayment] = await db.select().from(paymentEntries).where(eq(paymentEntries.id, paymentId)).limit(1);
 
       return Response.json({
         id: eraId,
@@ -5560,7 +6224,10 @@ export async function POST(request: Request) {
         matched,
         unmatched: unmatched.length,
         unmatchedClaims: unmatched,
-        reconciliationStatus: refreshed.status,
+        autoPosted,
+        started: !autoPostRequested,
+        autoPostError,
+        reconciliationStatus: finalPayment?.reconciliationStatus || refreshed.status,
         warnings: parsed.warnings,
       });
     }
@@ -5657,8 +6324,44 @@ export async function POST(request: Request) {
       const paymentDate = clean(payload.paymentDate) || today;
       const postingDate = clean(payload.postingDate) || today;
       const paymentId = crypto.randomUUID();
+      const paymentEntryId = crypto.randomUUID();
+      const paymentNumber = `PAY-${paymentEntryId}`;
+      await db.insert(paymentEntries).values({
+        id: paymentEntryId,
+        organizationId: DEFAULT_ORGANIZATION_ID,
+        paymentNumber,
+        payerId: clean(payload.paymentType) === "patient" ? null : claim.payerId,
+        payerType: clean(payload.paymentType) === "patient" ? "patient" : "payer",
+        patientId: clean(payload.paymentType) === "patient" ? claim.patientId : null,
+        remittanceId: remittanceId || null,
+        paymentAmount: amount,
+        paymentTotalEffective: amount,
+        paymentMethod: remittanceId ? "ERA" : normalizePaymentMethod(payload.paymentMethod),
+        referenceNumber: clean(payload.referenceNumber) || null,
+        paymentDate,
+        postingDate,
+        paymentStatus: "fully_posted",
+        reconciliationStatus: "balanced",
+        claimCount: "1",
+        postedClaimCount: "1",
+        claimPaidTotal: amount,
+        notes: clean(payload.paymentType) === "patient" ? "Patient payment collected against claim" : "Direct claim payment",
+        createdByUserId: currentUser.id,
+        createdByName: currentUser.fullName,
+        postedAt: new Date().toISOString(),
+      });
+      await db.insert(claimPayments).values({
+        id: crypto.randomUUID(),
+        paymentId: paymentEntryId,
+        claimId,
+        paidAmount: amount,
+        adjustmentAmount: adjustment,
+        postingStatus: "posted",
+        postedAt: new Date().toISOString(),
+      });
       await db.insert(payments).values({
         id: paymentId,
+        paymentEntryId,
         claimId,
         remittanceId: clean(payload.remittanceId) || null,
         paymentType: clean(payload.paymentType) || "insurance",
@@ -5685,6 +6388,7 @@ export async function POST(request: Request) {
         updatedAt: new Date().toISOString(),
       }).where(eq(claims.id, claimId));
       const ledgerBase = {
+        paymentEntryId,
         organizationId: DEFAULT_ORGANIZATION_ID,
         patientId: claim.patientId,
         claimId,

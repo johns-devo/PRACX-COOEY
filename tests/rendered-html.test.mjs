@@ -485,7 +485,9 @@ test("defines onboarding, analytics, CMS-1500 guidance, provider setup and local
   assert.match(dashboard, /currentTransactions/);
   assert.match(dashboard, /liveAging/);
   assert.match(login, /Secure practice access/);
-  assert.match(login, /Local development access/);
+  assert.match(login, /Billing that follows the claim/);
+  assert.doesNotMatch(login, /Local development access/);
+  assert.doesNotMatch(login, /Welcome@PRACX1/);
   assert.match(auth, /PBKDF2/);
   assert.match(auth, /HttpOnly/);
   assert.match(auth, /SameSite=Lax/);

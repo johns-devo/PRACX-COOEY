@@ -141,6 +141,9 @@ export function isSubmittedForFollowUp(claim: CollectionClaim): boolean {
 
 export function isDueForCollectionArena(claim: CollectionClaim, responseDays: number, asOf = new Date()): boolean {
   if (!isOutstandingClaim(claim) || !isSubmittedForFollowUp(claim)) return false;
+  // A denied claim is actionable immediately; it should not wait for the
+  // ordinary payer response-day aging threshold before entering Denials.
+  if (deriveClaimLifecycle(claim).startsWith("denied_")) return true;
   return claimAgeDays(claim, asOf) >= responseDays;
 }
 

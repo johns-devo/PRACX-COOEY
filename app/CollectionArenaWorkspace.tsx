@@ -1,13 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import {
   CLAIM_LIFECYCLE_LABELS,
   CLAIM_PARTY_LABELS,
-  arenaFollowUpActions,
   type ClaimParty,
-  type LifecycleActionId,
 } from "../lib/claim-lifecycle";
 import {
   AGING_BUCKETS,
@@ -47,8 +44,6 @@ function lifecycleTone(status: string) {
 
 export function CollectionArenaWorkspace({
   data,
-  inquiryHref,
-  claimPrepHref,
   isSaving,
   onAction,
   onOpenClaim,
@@ -61,8 +56,6 @@ export function CollectionArenaWorkspace({
     payers: DataRow[];
     eligibility: DataRow[];
   };
-  inquiryHref: string;
-  claimPrepHref: string;
   isSaving: boolean;
   onAction: (name: string, payload: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
   onOpenClaim: (claimId: string) => void;
@@ -101,22 +94,6 @@ export function CollectionArenaWorkspace({
     setGaps((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
-  function inquiryLink(row: { claim: DataRow }) {
-    const claimId = value(row.claim, "id");
-    const patientId = value(row.claim, "patientId");
-    const join = inquiryHref.includes("?") ? "&" : "?";
-    return `${inquiryHref}${join}patient=${encodeURIComponent(patientId)}&claim=${encodeURIComponent(claimId)}`;
-  }
-
-  async function runAction(claimId: string, id: LifecycleActionId) {
-    if (id === "in_process") await onAction("setClaimFollowUp", { id: claimId, followUpStatus: "in_process" });
-    if (id === "mark_denied") await onAction("setClaimFollowUp", { id: claimId, followUpStatus: "denied" });
-    if (id === "rebill") await onAction("rebillClaim", { id: claimId });
-    if (id === "bill_sec") await onAction("billClaimParty", { id: claimId, party: "sec" });
-    if (id === "bill_ter") await onAction("billClaimParty", { id: claimId, party: "ter" });
-    if (id === "bill_patient") await onAction("billClaimParty", { id: claimId, party: "patient" });
-  }
-
   return (
     <div className="collection-arena">
       <div className="collection-arena-stats">
@@ -153,14 +130,18 @@ export function CollectionArenaWorkspace({
         </label>
       </form>
 
-      <div className="collection-arena-criteria" aria-label="Insurance gaps">
-        {INSURANCE_GAPS.map((gap) => (
-          <button aria-pressed={gaps.includes(gap)} className={gaps.includes(gap) ? "active" : ""} key={gap} onClick={() => toggleGap(gap)} type="button">
-            {INSURANCE_GAP_LABELS[gap]}
-          </button>
-        ))}
-        {gaps.length > 0 && <button className="collection-arena-clear" onClick={() => setGaps([])} type="button">Clear criteria</button>}
-      </div>
+      <details className="collection-arena-more">
+        <summary>Insurance criteria{gaps.length ? ` · ${gaps.length} selected` : ""}</summary>
+        <div className="collection-arena-criteria" aria-label="Insurance gaps">
+          {INSURANCE_GAPS.map((gap) => (
+            <button aria-pressed={gaps.includes(gap)} className={gaps.includes(gap) ? "active" : ""} key={gap} onClick={() => toggleGap(gap)} type="button">
+              {INSURANCE_GAP_LABELS[gap]}
+            </button>
+          ))}
+          {gaps.length > 0 && <button className="collection-arena-clear" onClick={() => setGaps([])} type="button">Clear criteria</button>}
+          <button className="collection-arena-clear" disabled={isSaving} onClick={() => void onAction("seedCollectionFixtures", {})} type="button">Load sample claims</button>
+        </div>
+      </details>
 
       <div className="collection-arena-table">
         <table>
@@ -175,20 +156,11 @@ export function CollectionArenaWorkspace({
               <th>Wait</th>
               <th>Follow-up</th>
               <th>Balance</th>
-              <th>Action</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length ? filtered.map((row) => {
               const patient = data.patients.find((item) => value(item, "id") === value(row.claim, "patientId")) || {};
-              const coverages = (data.coverages || []).filter((item) => value(item, "patientId") === value(row.claim, "patientId") && value(item, "status") === "active");
-              const actions = arenaFollowUpActions({
-                status: row.lifecycle,
-                remaining: Number(row.claim.remainingBalance || 0),
-                hasSecondary: coverages.some((item) => value(item, "priority") === "secondary"),
-                hasTertiary: coverages.some((item) => value(item, "priority") === "tertiary"),
-                followUpStatus: row.followUpStatus,
-              });
               return (
                 <tr key={value(row.claim, "id")}>
                   <td><button className="mono collection-arena-claim" onClick={() => onOpenClaim(value(row.claim, "id"))} type="button">{value(row.claim, "claimNumber")}</button></td>
@@ -200,19 +172,10 @@ export function CollectionArenaWorkspace({
                   <td>{row.ageDays}d / {row.responseDays}d</td>
                   <td>{FOLLOW_UP_LABELS[row.followUpStatus] || "Due"}</td>
                   <td>{currency(row.claim.remainingBalance)}</td>
-                  <td>
-                    <div className="collection-arena-actions">
-                      {actions.map((item) => (
-                        <button disabled={isSaving} key={item.id} onClick={() => void runAction(value(row.claim, "id"), item.id)} type="button">{item.label}</button>
-                      ))}
-                      <Link href={inquiryLink(row)}>Account</Link>
-                      <Link href={claimPrepHref}>Claim prep</Link>
-                    </div>
-                  </td>
                 </tr>
               );
             }) : (
-              <tr><td colSpan={10}>No submitted claims are past the payer response window.</td></tr>
+              <tr><td colSpan={9}>No submitted claims are past the payer response window.</td></tr>
             )}
           </tbody>
         </table>

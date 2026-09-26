@@ -1,5 +1,17 @@
 import { moneyFixed, moneyNumber } from "./payment-posting";
 
+export type EraAdjustment = { group: string; code: string; amount: string };
+export function adjustmentDescription(code: string) {
+  const normalized = code.trim().toUpperCase().replace(/^PR(?=\d)/, "PR-");
+  const descriptions: Record<string, string> = {
+    "PR-1": "Patient responsibility — deductible",
+    "PR-2": "Patient responsibility — coinsurance",
+    "PR-3": "Patient responsibility — copayment",
+    "CO-45": "Contractual adjustment — charge exceeds fee schedule or contracted amount",
+  };
+  return descriptions[normalized] || `${normalized} — see payer remittance for explanation`;
+}
+
 export type EraClaimPayment = {
   claimControlNumber: string;
   claimStatusCode: string;
@@ -9,8 +21,22 @@ export type EraClaimPayment = {
   allowedAmount: string;
   adjustmentAmount: string;
   denialCodes: string[];
+  adjustments: EraAdjustment[];
   patientLastName?: string;
   patientFirstName?: string;
+  dateOfService?: string;
+  serviceLines: Array<{
+    procedureCode: string;
+    serviceDate: string;
+    units: string;
+    chargeAmount: string;
+    paidAmount: string;
+    adjustmentAmount: string;
+    patientResponsibility: string;
+    allowedAmount: string;
+    denialCodes: string[];
+    adjustments: EraAdjustment[];
+  }>;
 };
 
 export type EraParseResult = {
@@ -20,6 +46,7 @@ export type EraParseResult = {
   referenceNumber: string;
   paymentDate: string;
   payerName: string;
+  payerIdentifier: string;
   offsetAmount: string;
   refundAmount: string;
   incentiveAmount: string;
@@ -64,7 +91,7 @@ function sumCasAdjustments(parts: string[]) {
     const code = parts[index] || "";
     const amount = moneyNumber(parts[index + 1]);
     if (code) codes.push(code);
-    if (amount > 0) total += amount;
+    total += amount;
   }
   return { amount: total, codes };
 }
@@ -81,6 +108,7 @@ export function parseEra835(rawInput: string): EraParseResult {
       referenceNumber: "",
       paymentDate: new Date().toISOString().slice(0, 10),
       payerName: "",
+      payerIdentifier: "",
       offsetAmount: "0.00",
       refundAmount: "0.00",
       incentiveAmount: "0.00",
@@ -91,9 +119,12 @@ export function parseEra835(rawInput: string): EraParseResult {
   }
 
   let paymentAmount = 0;
+  let hasBpr = false;
+  let hasClaimResponsibility = false;
   let referenceNumber = "";
   let paymentDate = new Date().toISOString().slice(0, 10);
   let payerName = "";
+  let payerIdentifier = "";
   let offsetAmount = 0;
   let refundAmount = 0;
   let incentiveAmount = 0;
@@ -103,9 +134,14 @@ export function parseEra835(rawInput: string): EraParseResult {
 
   const flushCurrent = () => {
     if (!current) return;
+    const allAdjustments = [...current.adjustments, ...current.serviceLines.flatMap((line) => line.adjustments)];
+    if (!hasClaimResponsibility) current.patientResponsibility = moneyFixed(allAdjustments.filter((row) => row.group === "PR").reduce((total, row) => total + moneyNumber(row.amount), 0));
+    for (const line of current.serviceLines) {
+      if (!moneyNumber(line.allowedAmount)) line.allowedAmount = moneyFixed(moneyNumber(line.paidAmount) + moneyNumber(line.patientResponsibility));
+    }
     if (!moneyNumber(current.allowedAmount)) {
       current.allowedAmount = moneyFixed(
-        moneyNumber(current.paidAmount) + moneyNumber(current.adjustmentAmount) + moneyNumber(current.patientResponsibility),
+        moneyNumber(current.paidAmount) + moneyNumber(current.patientResponsibility),
       );
     }
     claims.push(current);
@@ -117,6 +153,7 @@ export function parseEra835(rawInput: string): EraParseResult {
     const tag = parts[0]?.toUpperCase() || "";
 
     if (tag === "BPR") {
+      hasBpr = true;
       paymentAmount = moneyNumber(parts[2]);
       if (parts[16]) paymentDate = yymmddToIso(parts[16]);
       else if (parts[15] && /^\d{6,8}$/.test(parts[15])) paymentDate = yymmddToIso(parts[15]);
@@ -124,6 +161,8 @@ export function parseEra835(rawInput: string): EraParseResult {
       referenceNumber = parts[2] || referenceNumber;
     } else if (tag === "N1" && (parts[1] || "").toUpperCase() === "PR") {
       payerName = parts[2] || payerName;
+    } else if (tag === "REF" && (parts[1] || "").toUpperCase() === "2U") {
+      payerIdentifier = parts[2] || payerIdentifier;
     } else if (tag === "PLB") {
       // Provider-level balance / offsets: PLB*... reason*amount pairs after date.
       for (let index = 3; index < parts.length; index += 2) {
@@ -140,6 +179,7 @@ export function parseEra835(rawInput: string): EraParseResult {
       const charge = moneyNumber(parts[3]);
       const paid = moneyNumber(parts[4]);
       const patientResp = moneyNumber(parts[5]);
+      hasClaimResponsibility = Boolean(parts[5]);
       current = {
         claimControlNumber: parts[1] || "",
         claimStatusCode: parts[2] || "",
@@ -149,14 +189,51 @@ export function parseEra835(rawInput: string): EraParseResult {
         allowedAmount: "0.00",
         adjustmentAmount: "0.00",
         denialCodes: [],
+        adjustments: [],
+        serviceLines: [],
       };
       if (!current.claimControlNumber) warnings.push("CLP missing claim control number.");
     } else if (tag === "CAS" && current) {
       const { amount, codes } = sumCasAdjustments(parts);
-      current.adjustmentAmount = moneyFixed(moneyNumber(current.adjustmentAmount) + amount);
+      const group = (parts[1] || "OA").toUpperCase();
+      if (group !== "PR") current.adjustmentAmount = moneyFixed(moneyNumber(current.adjustmentAmount) + amount);
       current.denialCodes = [...current.denialCodes, ...codes.map((code) => `${parts[1] || "OA"}-${code}`)];
+      const line = current.serviceLines[current.serviceLines.length - 1];
+      const target = line || current;
+      for (let index = 2; index < parts.length; index += 3) {
+        if (parts[index]) target.adjustments.push({ group, code: parts[index], amount: moneyFixed(parts[index + 1]) });
+      }
+      if (line) {
+        if (group !== "PR") line.adjustmentAmount = moneyFixed(moneyNumber(line.adjustmentAmount) + amount);
+        line.denialCodes = [...line.denialCodes, ...codes.map((code) => `${parts[1] || "OA"}-${code}`)];
+        if ((parts[1] || "").toUpperCase() === "PR") line.patientResponsibility = moneyFixed(moneyNumber(line.patientResponsibility) + amount);
+      }
     } else if (tag === "AMT" && current && (parts[1] || "").toUpperCase() === "B6") {
-      current.allowedAmount = moneyFixed(parts[2]);
+      const line = current.serviceLines[current.serviceLines.length - 1];
+      if (line) line.allowedAmount = moneyFixed(parts[2]);
+      else current.allowedAmount = moneyFixed(parts[2]);
+    } else if (tag === "DTM" && current && parts[1] === "472") {
+      const line = current.serviceLines[current.serviceLines.length - 1];
+      if (line) line.serviceDate = yymmddToIso(parts[2] || "");
+    } else if (tag === "DTM" && !current && (parts[1] || "").toUpperCase() === "405") {
+      // 835 DTM*405 is the payer's check/EFT issue date. BPR's final
+      // date can be a deposit/effective date and should not replace it.
+      paymentDate = yymmddToIso(parts[2] || "");
+    } else if (tag === "DTM" && current && (parts[1] || "").toUpperCase() === "232") {
+      current.dateOfService = yymmddToIso(parts[2] || "");
+    } else if (tag === "SVC" && current) {
+      current.serviceLines.push({
+        procedureCode: (parts[1] || "").replace(/^HC:/i, ""),
+        serviceDate: current.dateOfService || paymentDate,
+        units: parts[5] || "1",
+        chargeAmount: moneyFixed(parts[2]),
+        paidAmount: moneyFixed(parts[3]),
+        adjustmentAmount: "0.00",
+        patientResponsibility: "0.00",
+        allowedAmount: "0.00",
+        denialCodes: [],
+        adjustments: [],
+      });
     } else if (tag === "NM1" && current && (parts[1] || "").toUpperCase() === "QC") {
       current.patientLastName = parts[3] || "";
       current.patientFirstName = parts[4] || "";
@@ -164,7 +241,7 @@ export function parseEra835(rawInput: string): EraParseResult {
   }
   flushCurrent();
 
-  if (!paymentAmount && claims.length) {
+  if (!hasBpr && claims.length) {
     paymentAmount = claims.reduce((sum, row) => sum + moneyNumber(row.paidAmount), 0);
     warnings.push("BPR payment amount missing; derived from claim paid amounts.");
   }
@@ -180,6 +257,7 @@ export function parseEra835(rawInput: string): EraParseResult {
       referenceNumber,
       paymentDate,
       payerName,
+      payerIdentifier,
       offsetAmount: moneyFixed(offsetAmount),
       refundAmount: moneyFixed(refundAmount),
       incentiveAmount: moneyFixed(incentiveAmount),
@@ -195,6 +273,7 @@ export function parseEra835(rawInput: string): EraParseResult {
     referenceNumber,
     paymentDate,
     payerName,
+    payerIdentifier,
     offsetAmount: moneyFixed(offsetAmount),
     refundAmount: moneyFixed(refundAmount),
     incentiveAmount: moneyFixed(incentiveAmount),

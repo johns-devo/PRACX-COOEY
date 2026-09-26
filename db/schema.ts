@@ -1019,6 +1019,24 @@ export const feeScheduleItems = sqliteTable(
   (table) => [uniqueIndex("fee_item_unique").on(table.feeScheduleId, table.procedureCodeId, table.modifier)],
 );
 
+export const medicareFeeCodes = sqliteTable(
+  "medicare_fee_codes",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id),
+    codeSet: text("code_set").notNull().default("CPT"),
+    code: text("code").notNull(),
+    description: text("description").notNull(),
+    medicareAllowed: text("medicare_allowed").notNull(),
+    defaultCharge: text("default_charge").notNull(),
+    chargeOverride: text("charge_override", { enum: ["yes", "no"] }).notNull().default("no"),
+    source: text("source").notNull().default("upload"),
+    updatedBy: text("updated_by"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [uniqueIndex("medicare_fee_code_org_unique").on(table.organizationId, table.codeSet, table.code)],
+);
+
 export const claims = sqliteTable(
   "claims",
   {
@@ -1310,6 +1328,11 @@ export const paymentEntries = sqliteTable(
     id: text("id").primaryKey(),
     organizationId: text("organization_id").notNull().references(() => organizations.id),
     paymentNumber: text("payment_number").notNull(),
+    payerType: text("payer_type").notNull().default("payer"),
+    patientId: text("patient_id").references(() => patients.id),
+    encounterId: text("encounter_id").references(() => encounters.id),
+    serviceDate: text("service_date"),
+    paymentPurpose: text("payment_purpose"),
     payerId: text("payer_id").references(() => payers.id),
     remittanceId: text("remittance_id"),
     paymentAmount: text("payment_amount").notNull().default("0.00"),
@@ -1318,9 +1341,11 @@ export const paymentEntries = sqliteTable(
     incentiveAmount: text("incentive_amount").notNull().default("0.00"),
     otherAdjustments: text("other_adjustments").notNull().default("0.00"),
     paymentTotalEffective: text("payment_total_effective").notNull().default("0.00"),
-    paymentMethod: text("payment_method", { enum: ["Check", "EFT", "ERA", "Paper EOB"] }).notNull().default("Check"),
+    paymentMethod: text("payment_method").notNull().default("Check"),
+    methodDetails: text("method_details"),
     referenceNumber: text("reference_number"),
     paymentDate: text("payment_date").notNull(),
+    postingDate: text("posting_date"),
     notes: text("notes"),
     paymentStatus: text("payment_status", { enum: ["pending", "partially_posted", "fully_posted", "error"] }).notNull().default("pending"),
     claimCount: text("claim_count").notNull().default("0"),
@@ -1348,6 +1373,7 @@ export const claimPayments = sqliteTable(
     id: text("id").primaryKey(),
     paymentId: text("payment_id").notNull().references(() => paymentEntries.id),
     claimId: text("claim_id").notNull().references(() => claims.id),
+    adjustmentDetails: text("adjustment_details"),
     allowedAmount: text("allowed_amount").notNull().default("0.00"),
     paidAmount: text("paid_amount").notNull().default("0.00"),
     adjustmentAmount: text("adjustment_amount").notNull().default("0.00"),
@@ -1363,6 +1389,39 @@ export const claimPayments = sqliteTable(
     uniqueIndex("claim_payments_payment_claim_unique").on(table.paymentId, table.claimId),
     index("claim_payments_claim_idx").on(table.claimId),
     index("claim_payments_status_idx").on(table.paymentId, table.postingStatus),
+  ],
+);
+
+/** ERA/EOB allocation at the billed service-line (CPT/HCPCS) level. */
+export const claimPaymentServiceLines = sqliteTable(
+  "claim_payment_service_lines",
+  {
+    id: text("id").primaryKey(),
+    paymentId: text("payment_id").notNull().references(() => paymentEntries.id),
+    claimPaymentId: text("claim_payment_id").notNull().references(() => claimPayments.id),
+    claimLineId: text("claim_line_id").references(() => claimLines.id),
+    adjustmentDetails: text("adjustment_details"),
+    procedureCode: text("procedure_code").notNull(),
+    serviceDate: text("service_date").notNull(),
+    units: text("units").notNull().default("1"),
+    chargeAmount: text("charge_amount").notNull().default("0.00"),
+    allowedAmount: text("allowed_amount").notNull().default("0.00"),
+    paidAmount: text("paid_amount").notNull().default("0.00"),
+    adjustmentAmount: text("adjustment_amount").notNull().default("0.00"),
+    patientResponsibility: text("patient_responsibility").notNull().default("0.00"),
+    denialCode: text("denial_code"),
+    eobPage: text("eob_page"),
+    nextAction: text("next_action"),
+    postingStatus: text("posting_status", { enum: ["pending", "posted", "error"] }).notNull().default("pending"),
+    errorMessage: text("error_message"),
+    postedAt: text("posted_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("claim_payment_service_line_unique").on(table.paymentId, table.claimPaymentId, table.procedureCode, table.serviceDate),
+    index("claim_payment_service_line_payment_idx").on(table.paymentId, table.postingStatus),
+    index("claim_payment_service_line_claim_idx").on(table.claimPaymentId),
   ],
 );
 
@@ -1386,6 +1445,7 @@ export const remittances = sqliteTable(
     payerId: text("payer_id").references(() => payers.id),
     traceNumber: text("trace_number").notNull(),
     paymentDate: text("payment_date").notNull(),
+    postingDate: text("posting_date"),
     amount: text("amount").notNull(),
     source: text("source").notNull().default("835_file"),
     status: text("status", { enum: ["received", "matched", "review", "posted"] }).notNull().default("received"),
@@ -1426,6 +1486,7 @@ export const payments = sqliteTable(
   "payments",
   {
     id: text("id").primaryKey(),
+    paymentEntryId: text("payment_entry_id").references(() => paymentEntries.id),
     claimId: text("claim_id").notNull().references(() => claims.id),
     remittanceId: text("remittance_id").references(() => remittances.id),
     paymentType: text("payment_type").notNull(),
@@ -1446,6 +1507,7 @@ export const ledgerTransactions = sqliteTable(
   "ledger_transactions",
   {
     id: text("id").primaryKey(),
+    paymentEntryId: text("payment_entry_id").references(() => paymentEntries.id),
     organizationId: text("organization_id").notNull().references(() => organizations.id),
     patientId: text("patient_id").notNull().references(() => patients.id),
     claimId: text("claim_id").references(() => claims.id),

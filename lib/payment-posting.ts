@@ -1,9 +1,43 @@
-export type PaymentMethod = "Check" | "EFT" | "ERA" | "Paper EOB";
+export type PaymentMethod = "Cash" | "Credit Card" | "Debit Card" | "HSA/FSA Card" | "Virtual Card" | "Digital Wallet" | "Check" | "Cashier's Check" | "Money Order" | "EFT" | "ACH" | "Wire Transfer" | "Online Payment" | "Other" | "ERA" | "Paper EOB";
 export type PaymentEntryStatus = "pending" | "partially_posted" | "fully_posted" | "error";
 export type ClaimPaymentPostingStatus = "pending" | "posted" | "error";
 export type PaymentLogAction = "Create" | "Populate" | "AutoPost" | "ManualPost" | "Error" | "Correction";
 
-export const PAYMENT_METHOD_OPTIONS: PaymentMethod[] = ["Check", "EFT", "ERA", "Paper EOB"];
+export const PAYMENT_METHOD_OPTIONS: PaymentMethod[] = ["Cash", "Credit Card", "Debit Card", "HSA/FSA Card", "Virtual Card", "Digital Wallet", "Check", "Cashier's Check", "Money Order", "EFT", "ACH", "Wire Transfer", "Online Payment", "Other", "ERA", "Paper EOB"];
+export const CARD_BRANDS = ["Visa", "Mastercard", "American Express", "Discover", "JCB", "UnionPay", "Diners Club", "Other", "Unknown"];
+export const CARD_METHODS = ["Credit Card", "Debit Card", "HSA/FSA Card", "Virtual Card"];
+
+export function paymentMethodDetails(method: PaymentMethod, input: Record<string, unknown>) {
+  const text = (key: string) => String(input[key] || "").trim().slice(0, 120);
+  const details: Record<string, string> = {};
+  if (CARD_METHODS.includes(method)) {
+    if (!CARD_BRANDS.includes(text("cardBrand"))) throw new Error("Select the card brand, or Unknown.");
+    if (text("cardLast4") && !/^\d{4}$/.test(text("cardLast4"))) throw new Error("Card last four must contain exactly four digits.");
+    details.cardBrand = text("cardBrand");
+    details.cardLast4 = text("cardLast4");
+    details.authorizationCode = text("authorizationCode");
+    details.processor = text("processor");
+  }
+  if (method === "Digital Wallet") details.walletProvider = text("walletProvider");
+  if (["Check", "Cashier's Check", "Money Order", "EFT", "ACH", "Wire Transfer"].includes(method)) details.bankName = text("bankName");
+  if (method === "Online Payment") details.processor = text("processor");
+  if (method === "Other") {
+    if (!text("otherMethod")) throw new Error("Describe the other payment method.");
+    details.otherMethod = text("otherMethod");
+  }
+  return details;
+}
+
+/** Fail closed when a saved ERA mapping cannot be verified. */
+export function eraMappingError(unmatchedJson: string | null | undefined): string | null {
+  try {
+    const rows = JSON.parse(unmatchedJson || "[]");
+    if (!Array.isArray(rows)) return "ERA mapping data is invalid. Review the ERA before posting.";
+    return rows.length ? `${rows.length} unmatched ERA claim(s). Map every claim before posting.` : null;
+  } catch {
+    return "ERA mapping data is invalid. Review the ERA before posting.";
+  }
+}
 
 export const PAYMENT_ENTRY_STATUS_LABELS: Record<PaymentEntryStatus, string> = {
   pending: "Pending Posting",
@@ -14,7 +48,8 @@ export const PAYMENT_ENTRY_STATUS_LABELS: Record<PaymentEntryStatus, string> = {
 
 export function normalizePaymentMethod(value: unknown): PaymentMethod {
   const raw = String(value || "").trim();
-  if (raw === "Check" || raw === "EFT" || raw === "ERA" || raw === "Paper EOB") return raw;
+  const exact = PAYMENT_METHOD_OPTIONS.find((method) => method.toLowerCase() === raw.toLowerCase());
+  if (exact) return exact;
   const lower = raw.toLowerCase();
   if (lower.includes("check")) return "Check";
   if (lower.includes("eft") || lower.includes("ach")) return "EFT";
@@ -76,6 +111,12 @@ export function sumClaimPostedAmounts(rows: Array<{
   ), 0).toFixed(2));
 }
 
+/** ERA check amounts are cash-only; CAS adjustments are adjudication, not money
+ * drawn from the EFT/check and must not be compared to the ERA BPR amount. */
+export function sumClaimCashAmounts(rows: Array<{ paidAmount?: string | number | null }>) {
+  return Number(rows.reduce((sum, row) => sum + moneyNumber(row.paidAmount), 0).toFixed(2));
+}
+
 /** @deprecated use sumClaimPostedAmounts */
 export function sumClaimPaidAmounts(rows: Array<{ paidAmount?: string | number | null }>) {
   return rows.reduce((sum, row) => sum + moneyNumber(row.paidAmount), 0);
@@ -88,6 +129,7 @@ export function validatePaymentTotals(input: {
   incentiveAmount?: string | number | null;
   otherAdjustments?: string | number | null;
   paymentTotalEffective?: string | number | null;
+  paymentMethod?: string | null;
   claimPayments: Array<{
     id?: string;
     claimId?: string;
@@ -100,7 +142,9 @@ export function validatePaymentTotals(input: {
   const paymentTotalEffective = input.paymentTotalEffective != null && input.paymentTotalEffective !== ""
     ? moneyNumber(input.paymentTotalEffective)
     : calculatePaymentTotalEffective(input);
-  const totalClaimsPosted = sumClaimPostedAmounts(input.claimPayments);
+  const totalClaimsPosted = input.paymentMethod === "ERA"
+    ? sumClaimCashAmounts(input.claimPayments)
+    : sumClaimPostedAmounts(input.claimPayments);
   const matched = amountsMatch(paymentTotalEffective, totalClaimsPosted);
   const mismatchMessage = matched
     ? null

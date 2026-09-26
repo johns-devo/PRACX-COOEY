@@ -69,6 +69,7 @@ const CATEGORY_BY_FIELD: Array<[RegExp, string]> = [
   [/duplicate/i, "Duplicate claims"],
   [/filing|timely/i, "Filing limit"],
   [/facility/i, "Facility"],
+  [/clinical|encounter|documentation|assessment|treatment plan|medical necessity|hpi/i, "Clinical documentation"],
   [/signature/i, "Required fields"],
 ];
 
@@ -189,6 +190,12 @@ export const SCRUB_RULES_CHECKED = [
   "epsdt",
   "ndc",
   "authorization",
+  "payer_configuration_and_routing",
+  "encounter_signature",
+  "clinical_documentation",
+  "diagnosis_master_directory",
+  "procedure_master_directory",
+  "diagnosis_pointer_linkage",
 ] as const;
 
 export function deriveWorkflowStatus(input: {

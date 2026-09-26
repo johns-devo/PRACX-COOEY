@@ -8,6 +8,7 @@ export type WorkspaceNavItem = {
   label: string;
   href: string;
   key: string;
+  section?: string;
 };
 
 export function workspaceBasePath(variant: WorkspaceVariant) {
@@ -25,22 +26,20 @@ export function workspaceNavItems(variant: WorkspaceVariant): WorkspaceNavItem[]
   if (isBillingStyleWorkspace(variant)) {
     if (variant === "pracx") {
       return [
-        { label: "Dashboard", href: `${base}/dashboard` || "/dashboard", key: "dashboard" },
-        { label: "Patients", href: `${base}/patients` || "/patients", key: "patients" },
-        { label: "Claims", href: `${base}/claim-inquiry` || "/claim-inquiry", key: "claim_inquiry" },
-        { label: "Collection Arena", href: `${base}/collections` || "/collections", key: "collections" },
-        { label: "Claim prep", href: `${base}/claims` || "/claims", key: "claims" },
-        { label: "Payments", href: `${base}/payments` || "/payments", key: "payments" },
-        { label: "Reports", href: `${base}/reports` || "/reports", key: "reports" },
+        { label: "Dashboard", href: `${base}/dashboard` || "/dashboard", key: "dashboard", section: "Workspace" },
+        { label: "Patients", href: `${base}/patients` || "/patients", key: "patients", section: "Workspace" },
+        { label: "Claims", href: `${base}/claim-inquiry` || "/claim-inquiry", key: "claim_inquiry", section: "Revenue cycle" },
+        { label: "Payments", href: `${base}/payments` || "/payments", key: "payments", section: "Revenue cycle" },
+        { label: "Collection Arena", href: `${base}/collections` || "/collections", key: "collections", section: "Revenue cycle" },
+        { label: "Reports & analytics", href: `${base}/reports` || "/reports", key: "reports", section: "Revenue cycle" },
       ];
     }
     return [
-      { label: "Patients", href: `${base}/patients`, key: "patients" },
-      { label: "Claims", href: `${base}/claim-inquiry`, key: "claim_inquiry" },
-      { label: "Collection Arena", href: `${base}/collections`, key: "collections" },
-      { label: "Claim prep", href: `${base}/claims`, key: "claims" },
-      { label: "Payments", href: `${base}/payments`, key: "payments" },
-      { label: "Reports", href: `${base}/reports`, key: "reports" },
+      { label: "Patients", href: `${base}/patients`, key: "patients", section: "Workspace" },
+      { label: "Claims", href: `${base}/claim-inquiry`, key: "claim_inquiry", section: "Revenue cycle" },
+      { label: "Payments", href: `${base}/payments`, key: "payments", section: "Revenue cycle" },
+      { label: "Collection Arena", href: `${base}/collections`, key: "collections", section: "Revenue cycle" },
+      { label: "Reports & analytics", href: `${base}/reports`, key: "reports", section: "Revenue cycle" },
     ];
   }
   return [
@@ -52,7 +51,6 @@ export function workspaceNavItems(variant: WorkspaceVariant): WorkspaceNavItem[]
     { label: "Chart", href: "/chart", key: "chart" },
     { label: "Claims", href: "/claim-inquiry", key: "claim_inquiry" },
     { label: "Collection Arena", href: "/collections", key: "collections" },
-    { label: "Claim prep", href: "/claims", key: "claims" },
     { label: "Payments", href: "/payments", key: "payments" },
     { label: "Reports", href: "/reports", key: "reports" },
   ];
@@ -64,6 +62,9 @@ export function workspaceConfigLinks(variant: WorkspaceVariant, isAdmin: boolean
   const claimConfigHref = base ? `${base}/setup/claim-configuration` : "/setup/claim-configuration";
   const links = [
     { label: "Practice setup", href: setupHref, key: "setup" },
+    ...(isAdmin
+      ? [{ label: "Fee setup", href: base ? `${base}/setup/fee-setup` : "/setup/fee-setup", key: "fee_setup" }]
+      : []),
     ...(isAdmin
       ? [{ label: "Claim configuration", href: claimConfigHref, key: "claim_configuration" }]
       : []),

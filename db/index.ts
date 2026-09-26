@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
 import { CLAIM_CONFIGURATION_DEFAULTS } from "../lib/claim-configuration";
 import { uniqueDiagnosisCodeSeeds } from "../lib/diagnosis-code-seeds";
+import { RPM_CODE_MASTER, RPM_MEDICARE_REFERENCE } from "../lib/rpm-code-master";
 import * as schema from "./schema";
 
 async function runD1Batches(db: D1Database, statements: D1PreparedStatement[], chunkSize = 50) {
@@ -255,9 +256,19 @@ export function getDb() {
 }
 
 let coreSchemaReady = false;
+let coreSchemaInitialization: Promise<void> | null = null;
 
 export async function ensureCoreSchema() {
   if (coreSchemaReady) return;
+  if (coreSchemaInitialization) return coreSchemaInitialization;
+  coreSchemaInitialization = initializeCoreSchema().catch((error) => {
+    coreSchemaInitialization = null;
+    throw error;
+  });
+  return coreSchemaInitialization;
+}
+
+async function initializeCoreSchema() {
   if (!env.DB) {
     throw new Error("Cloudflare D1 binding `DB` is unavailable.");
   }
@@ -1048,6 +1059,21 @@ export async function ensureCoreSchema() {
       FOREIGN KEY (fee_schedule_id) REFERENCES fee_schedules(id),
       FOREIGN KEY (procedure_code_id) REFERENCES procedure_codes(id)
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS medicare_fee_codes (
+      id text PRIMARY KEY NOT NULL,
+      organization_id text NOT NULL,
+      code_set text DEFAULT 'CPT' NOT NULL,
+      code text NOT NULL,
+      description text NOT NULL,
+      medicare_allowed text NOT NULL,
+      default_charge text NOT NULL,
+      charge_override text DEFAULT 'no' NOT NULL,
+      source text DEFAULT 'upload' NOT NULL,
+      updated_by text,
+      updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id),
+      UNIQUE (organization_id, code_set, code)
+    )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS claims (
       id text PRIMARY KEY NOT NULL,
       organization_id text NOT NULL,
@@ -1303,6 +1329,7 @@ export async function ensureCoreSchema() {
       payment_method text DEFAULT 'Check' NOT NULL,
       reference_number text,
       payment_date text NOT NULL,
+      posting_date text,
       notes text,
       payment_status text DEFAULT 'pending' NOT NULL,
       claim_count text DEFAULT '0' NOT NULL,
@@ -1342,6 +1369,34 @@ export async function ensureCoreSchema() {
     db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS claim_payments_payment_claim_unique ON claim_payments (payment_id, claim_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS claim_payments_claim_idx ON claim_payments (claim_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS claim_payments_status_idx ON claim_payments (payment_id, posting_status)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS claim_payment_service_lines (
+      id text PRIMARY KEY NOT NULL,
+      payment_id text NOT NULL,
+      claim_payment_id text NOT NULL,
+      claim_line_id text,
+      procedure_code text NOT NULL,
+      service_date text NOT NULL,
+      units text DEFAULT '1' NOT NULL,
+      charge_amount text DEFAULT '0.00' NOT NULL,
+      allowed_amount text DEFAULT '0.00' NOT NULL,
+      paid_amount text DEFAULT '0.00' NOT NULL,
+      adjustment_amount text DEFAULT '0.00' NOT NULL,
+      patient_responsibility text DEFAULT '0.00' NOT NULL,
+      denial_code text,
+      eob_page text,
+      next_action text,
+      posting_status text DEFAULT 'pending' NOT NULL,
+      error_message text,
+      posted_at text,
+      created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      FOREIGN KEY (payment_id) REFERENCES payment_entries(id),
+      FOREIGN KEY (claim_payment_id) REFERENCES claim_payments(id),
+      FOREIGN KEY (claim_line_id) REFERENCES claim_lines(id)
+    )`),
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS claim_payment_service_line_unique ON claim_payment_service_lines (payment_id, claim_payment_id, procedure_code, service_date)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS claim_payment_service_line_payment_idx ON claim_payment_service_lines (payment_id, posting_status)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS claim_payment_service_line_claim_idx ON claim_payment_service_lines (claim_payment_id)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS payment_logs (
       id text PRIMARY KEY NOT NULL,
       payment_id text NOT NULL,
@@ -1357,6 +1412,7 @@ export async function ensureCoreSchema() {
       payer_id text,
       trace_number text NOT NULL,
       payment_date text NOT NULL,
+      posting_date text,
       amount text NOT NULL,
       source text DEFAULT '835_file' NOT NULL,
       status text DEFAULT 'received' NOT NULL,
@@ -1634,6 +1690,7 @@ export async function ensureCoreSchema() {
   }
 
   for (const statement of [
+    "ALTER TABLE remittances ADD COLUMN posting_date text",
     "ALTER TABLE integrations ADD COLUMN source_system text",
     "ALTER TABLE integrations ADD COLUMN last_tested_at text",
     "ALTER TABLE integrations ADD COLUMN last_test_status text",
@@ -1763,6 +1820,15 @@ export async function ensureCoreSchema() {
     "ALTER TABLE payment_entries ADD COLUMN other_adjustments text DEFAULT '0.00' NOT NULL",
     "ALTER TABLE payment_entries ADD COLUMN payment_total_effective text DEFAULT '0.00' NOT NULL",
     "ALTER TABLE payment_entries ADD COLUMN reconciliation_status text DEFAULT 'pending' NOT NULL",
+    "ALTER TABLE payment_entries ADD COLUMN posting_date text",
+    "ALTER TABLE payment_entries ADD COLUMN method_details text",
+    "ALTER TABLE payment_entries ADD COLUMN payer_type text DEFAULT 'payer' NOT NULL",
+    "ALTER TABLE payment_entries ADD COLUMN patient_id text",
+    "ALTER TABLE payment_entries ADD COLUMN encounter_id text",
+    "ALTER TABLE payment_entries ADD COLUMN service_date text",
+    "ALTER TABLE payment_entries ADD COLUMN payment_purpose text",
+    "ALTER TABLE payments ADD COLUMN payment_entry_id text",
+    "ALTER TABLE ledger_transactions ADD COLUMN payment_entry_id text",
     "ALTER TABLE claims ADD COLUMN remaining_balance text DEFAULT '0.00' NOT NULL",
     "ALTER TABLE claims ADD COLUMN lifecycle_status text DEFAULT 'new' NOT NULL",
     "ALTER TABLE claims ADD COLUMN follow_up_status text DEFAULT '' NOT NULL",
@@ -1884,6 +1950,7 @@ export async function ensureCoreSchema() {
     payment_method text DEFAULT 'Check' NOT NULL,
     reference_number text,
     payment_date text NOT NULL,
+    posting_date text,
     notes text,
     payment_status text DEFAULT 'pending' NOT NULL,
     claim_count text DEFAULT '0' NOT NULL,
@@ -1923,6 +1990,41 @@ export async function ensureCoreSchema() {
   await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS claim_payments_payment_claim_unique ON claim_payments (payment_id, claim_id)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS claim_payments_claim_idx ON claim_payments (claim_id)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS claim_payments_status_idx ON claim_payments (payment_id, posting_status)").run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS claim_payment_service_lines (
+    id text PRIMARY KEY NOT NULL,
+    payment_id text NOT NULL,
+    claim_payment_id text NOT NULL,
+    claim_line_id text,
+    procedure_code text NOT NULL,
+    service_date text NOT NULL,
+    units text DEFAULT '1' NOT NULL,
+    charge_amount text DEFAULT '0.00' NOT NULL,
+    allowed_amount text DEFAULT '0.00' NOT NULL,
+    paid_amount text DEFAULT '0.00' NOT NULL,
+    adjustment_amount text DEFAULT '0.00' NOT NULL,
+    patient_responsibility text DEFAULT '0.00' NOT NULL,
+    denial_code text,
+    eob_page text,
+    next_action text,
+    posting_status text DEFAULT 'pending' NOT NULL,
+    error_message text,
+    posted_at text,
+    created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    FOREIGN KEY (payment_id) REFERENCES payment_entries(id),
+    FOREIGN KEY (claim_payment_id) REFERENCES claim_payments(id),
+    FOREIGN KEY (claim_line_id) REFERENCES claim_lines(id)
+  )`).run();
+  await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS claim_payment_service_line_unique ON claim_payment_service_lines (payment_id, claim_payment_id, procedure_code, service_date)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS claim_payment_service_line_payment_idx ON claim_payment_service_lines (payment_id, posting_status)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS claim_payment_service_line_claim_idx ON claim_payment_service_lines (claim_payment_id)").run();
+  for (const table of ["claim_payments", "claim_payment_service_lines"]) {
+    try {
+      await db.prepare(`ALTER TABLE ${table} ADD COLUMN adjustment_details text`).run();
+    } catch (error) {
+      if (!String(error).toLowerCase().includes("duplicate column")) throw error;
+    }
+  }
   await db.prepare(`CREATE TABLE IF NOT EXISTS payment_logs (
     id text PRIMARY KEY NOT NULL,
     payment_id text NOT NULL,
@@ -2494,6 +2596,19 @@ export async function ensureCoreSchema() {
       (id, code, description, code_set, default_charge, default_place_of_service, requires_authorization, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind("proc_99490", "99490", "Chronic care management, first 20 minutes", "CPT", "95.00", "11", "no", "active"),
+    ...RPM_CODE_MASTER.map((rpm) => db.prepare(`INSERT INTO procedure_codes
+      (id, code, description, code_set, default_charge, default_place_of_service, requires_authorization, status)
+      VALUES (?, ?, ?, 'CPT', '0.00', '11', 'no', 'active')
+      ON CONFLICT(code) DO UPDATE SET description = excluded.description, code_set = excluded.code_set, status = 'active'`)
+      .bind(`proc_${rpm.code}`, rpm.code, rpm.description)),
+    db.prepare(`INSERT OR IGNORE INTO fee_schedules
+      (id, organization_id, payer_id, name, effective_date, status)
+      VALUES (?, ?, ?, ?, ?, 'active')`)
+      .bind(RPM_MEDICARE_REFERENCE.scheduleId, "org_pracx_health", RPM_MEDICARE_REFERENCE.payerId, RPM_MEDICARE_REFERENCE.name, RPM_MEDICARE_REFERENCE.effectiveDate),
+    ...RPM_CODE_MASTER.map((rpm) => db.prepare(`INSERT OR IGNORE INTO fee_schedule_items
+      (id, fee_schedule_id, procedure_code_id, allowed_amount)
+      SELECT ?, ?, id, ? FROM procedure_codes WHERE code = ?`)
+      .bind(`fsi_medicare_rpm_${rpm.code}`, RPM_MEDICARE_REFERENCE.scheduleId, rpm.medicareReferenceFee, rpm.code)),
     db.prepare(`INSERT OR IGNORE INTO fee_schedules
       (id, organization_id, payer_id, name, effective_date, status)
       VALUES (?, ?, ?, ?, ?, ?)`)

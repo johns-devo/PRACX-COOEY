@@ -302,6 +302,7 @@ export function PracxIntegrationDashboard({
                 <th>Received</th>
                 <th>Source</th>
                 <th>Type</th>
+                <th>External ref</th>
                 <th>External patient</th>
                 <th>Status</th>
                 <th>Reason</th>
@@ -314,6 +315,7 @@ export function PracxIntegrationDashboard({
                   <td>{new Date(value(row, "receivedAt")).toLocaleString()}</td>
                   <td><strong>{value(row, "sourceLabel")}</strong></td>
                   <td>{value(row, "eventType").replaceAll("_", " ")}</td>
+                  <td className="mono">{value(row, "externalId") || "—"}</td>
                   <td>
                     <strong>{value(row, "patientNameExternal") || "—"}</strong>
                     <small className="address">{value(row, "patientDobExternal") || value(row, "externalId") || ""}</small>
@@ -335,7 +337,7 @@ export function PracxIntegrationDashboard({
                     <div className="row-actions">
                       {value(row, "status") !== "missing_integration" && (
                         <>
-                          <button disabled={isSaving} onClick={() => onResolve(value(row, "id"), "accepted")} type="button">Accept</button>
+                          <button disabled={isSaving} onClick={() => onResolve(value(row, "id"), "accepted")} type="button">{["held", "pending", "unmatched"].includes(value(row, "status")) ? "Reprocess & accept" : "Accept"}</button>
                           <button disabled={isSaving} onClick={() => onResolve(value(row, "id"), "held")} type="button">Hold</button>
                           <button disabled={isSaving} onClick={() => onResolve(value(row, "id"), "rejected")} type="button">Reject</button>
                         </>
@@ -346,7 +348,7 @@ export function PracxIntegrationDashboard({
                     </div>
                   </td>
                 </tr>
-              )) : <tr><td colSpan={7}>No blocked inbound items. All current payloads were accepted.</td></tr>}
+              )) : <tr><td colSpan={8}>No blocked inbound items. All current payloads were accepted.</td></tr>}
             </tbody>
           </table>
         </div>

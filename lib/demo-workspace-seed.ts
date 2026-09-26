@@ -3,24 +3,40 @@
  * Uses reserved `smp_*` ids (not `pat_demo_` / `apt_demo_`, which bootstrap deactivates).
  */
 
-import { eq, like } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import type { getDb } from "../db";
 import {
   appointments,
   billingResponsibilityProfiles,
   claimBatchMembers,
+  claimTransmissionLogs,
   claimBatches,
+  claimCorrectionHistory,
   claimLines,
   claimPayments,
   claimResponsibilitySnapshots,
+  claimWorkflowEvents,
+  clinicalOrders,
+  clinicalOrderResults,
   claims,
   encounterEvents,
   encounters,
+  eligibilityChecks,
+  eligibilityUpdateHistory,
   insurancePlans,
   patientCoverages,
+  patientDocuments,
   patients,
   paymentEntries,
   paymentLogs,
+  payments,
+  ledgerTransactions,
+  reconsiderations,
+  integrationSyncEvents,
+  integrationInboundEvents,
+  patientMedications,
+  patientAllergies,
+  patientFlowsheetEntries,
   payers,
   responsibilitySources,
   visitFlowEvents,
@@ -89,11 +105,12 @@ function claimSnapshot(patient: {
 }
 
 async function clearExistingDemo(db: Db) {
-  const claimIds = (await db.select({ id: claims.id }).from(claims).where(like(claims.id, "smp_clm_%"))).map((row) => row.id);
   const batchIds = (await db.select({ id: claimBatches.id }).from(claimBatches).where(like(claimBatches.id, "smp_batch_%"))).map((row) => row.id);
   const paymentIds = (await db.select({ id: paymentEntries.id }).from(paymentEntries).where(like(paymentEntries.id, "smp_pay_%"))).map((row) => row.id);
   const appointmentIds = (await db.select({ id: appointments.id }).from(appointments).where(like(appointments.id, "smp_apt_%"))).map((row) => row.id);
   const encounterIds = (await db.select({ id: encounters.id }).from(encounters).where(like(encounters.id, "smp_enc_%"))).map((row) => row.id);
+  const claimRows = await db.select({ id: claims.id, encounterId: claims.encounterId }).from(claims);
+  const claimIds = claimRows.filter((row) => row.id.startsWith("smp_clm_") || (row.encounterId && encounterIds.includes(row.encounterId))).map((row) => row.id);
   const patientIds = (await db.select({ id: patients.id }).from(patients).where(like(patients.id, "smp_pat_%"))).map((row) => row.id);
 
   for (const paymentId of paymentIds) {
@@ -102,15 +119,31 @@ async function clearExistingDemo(db: Db) {
     await db.delete(paymentEntries).where(eq(paymentEntries.id, paymentId));
   }
   for (const batchId of batchIds) {
+    await db.delete(claimTransmissionLogs).where(eq(claimTransmissionLogs.batchId, batchId));
     await db.delete(claimBatchMembers).where(eq(claimBatchMembers.batchId, batchId));
     await db.delete(claimBatches).where(eq(claimBatches.id, batchId));
   }
   for (const claimId of claimIds) {
+    await db.delete(claimBatchMembers).where(eq(claimBatchMembers.claimId, claimId));
+    await db.delete(paymentLogs).where(eq(paymentLogs.claimId, claimId));
+    await db.delete(claimPayments).where(eq(claimPayments.claimId, claimId));
+    await db.delete(payments).where(eq(payments.claimId, claimId));
+    await db.delete(reconsiderations).where(eq(reconsiderations.claimId, claimId));
+    await db.delete(integrationSyncEvents).where(eq(integrationSyncEvents.claimId, claimId));
+    await db.delete(ledgerTransactions).where(eq(ledgerTransactions.claimId, claimId));
+    await db.delete(claimCorrectionHistory).where(eq(claimCorrectionHistory.claimId, claimId));
+    await db.delete(claimWorkflowEvents).where(eq(claimWorkflowEvents.claimId, claimId));
     await db.delete(claimLines).where(eq(claimLines.claimId, claimId));
     await db.delete(claimResponsibilitySnapshots).where(eq(claimResponsibilitySnapshots.claimId, claimId));
     await db.delete(claims).where(eq(claims.id, claimId));
   }
   for (const encounterId of encounterIds) {
+    await db.delete(clinicalOrderResults).where(eq(clinicalOrderResults.encounterId, encounterId));
+    await db.delete(clinicalOrders).where(eq(clinicalOrders.encounterId, encounterId));
+    await db.delete(patientMedications).where(eq(patientMedications.encounterId, encounterId));
+    await db.delete(patientAllergies).where(eq(patientAllergies.encounterId, encounterId));
+    await db.delete(patientFlowsheetEntries).where(eq(patientFlowsheetEntries.encounterId, encounterId));
+    await db.delete(integrationInboundEvents).where(eq(integrationInboundEvents.appliedEncounterId, encounterId));
     await db.delete(encounterEvents).where(eq(encounterEvents.encounterId, encounterId));
     await db.delete(encounters).where(eq(encounters.id, encounterId));
   }
@@ -123,6 +156,12 @@ async function clearExistingDemo(db: Db) {
     for (const profile of profiles) {
       await db.delete(responsibilitySources).where(eq(responsibilitySources.profileId, profile.id));
       await db.delete(billingResponsibilityProfiles).where(eq(billingResponsibilityProfiles.id, profile.id));
+    }
+    const coverageIds = (await db.select({ id: patientCoverages.id }).from(patientCoverages).where(eq(patientCoverages.patientId, patientId))).map((row) => row.id);
+    if (coverageIds.length) {
+      await db.delete(eligibilityUpdateHistory).where(inArray(eligibilityUpdateHistory.coverageId, coverageIds));
+      await db.delete(eligibilityChecks).where(inArray(eligibilityChecks.coverageId, coverageIds));
+      await db.delete(patientDocuments).where(inArray(patientDocuments.coverageId, coverageIds));
     }
     await db.delete(patientCoverages).where(eq(patientCoverages.patientId, patientId));
     await db.delete(patients).where(eq(patients.id, patientId));
@@ -692,6 +731,74 @@ export async function seedDemoWorkspace(
       charge: "225.00",
       dx: ["Z00.00"],
       lines: [{ code: "G0439", charge: "225.00", pointers: "A" }],
+      scrubResult: "pass",
+      scrubErrors: "0",
+    },
+    {
+      id: "smp_clm_ready_aetna_2",
+      number: "SMP-READY-AETNA-2",
+      encounterId: "smp_enc_submitted",
+      patientId: "smp_pat_ava",
+      coverageId: "smp_cov_ava",
+      payerId: AETNA_PAYER,
+      status: "ready",
+      workflow: "ready_to_bill",
+      scrub: "clean",
+      method: "unassigned",
+      charge: "110.00",
+      dx: ["E78.5"],
+      lines: [{ code: "99212", charge: "110.00", pointers: "A" }],
+      scrubResult: "pass",
+      scrubErrors: "0",
+    },
+    {
+      id: "smp_clm_ready_medicare",
+      number: "SMP-READY-MEDICARE",
+      encounterId: "smp_enc_ready_unclaimed",
+      patientId: "smp_pat_liam",
+      coverageId: "smp_cov_liam",
+      payerId: MEDICARE_PAYER,
+      status: "ready",
+      workflow: "ready_to_bill",
+      scrub: "clean",
+      method: "unassigned",
+      charge: "175.00",
+      dx: ["E11.9", "I10"],
+      lines: [{ code: "99214", charge: "175.00", pointers: "AB" }],
+      scrubResult: "pass",
+      scrubErrors: "0",
+    },
+    {
+      id: "smp_clm_ready_medicare_2",
+      number: "SMP-READY-MEDICARE-2",
+      encounterId: "smp_enc_edi",
+      patientId: "smp_pat_noah",
+      coverageId: "smp_cov_noah",
+      payerId: MEDICARE_PAYER,
+      status: "ready",
+      workflow: "ready_to_bill",
+      scrub: "clean",
+      method: "unassigned",
+      charge: "145.00",
+      dx: ["M54.50"],
+      lines: [{ code: "99213", charge: "145.00", pointers: "A" }],
+      scrubResult: "pass",
+      scrubErrors: "0",
+    },
+    {
+      id: "smp_clm_ready_paper",
+      number: "SMP-READY-PAPER",
+      encounterId: "smp_enc_draft",
+      patientId: "smp_pat_mia",
+      coverageId: "smp_cov_mia",
+      payerId: PAPER_PAYER,
+      status: "ready",
+      workflow: "ready_to_bill",
+      scrub: "clean",
+      method: "unassigned",
+      charge: "145.00",
+      dx: ["J01.90"],
+      lines: [{ code: "99213", charge: "145.00", pointers: "A" }],
       scrubResult: "pass",
       scrubErrors: "0",
     },

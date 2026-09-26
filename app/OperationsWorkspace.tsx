@@ -1,7 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { adjustmentDescription } from "../lib/era-835";
+
+function AdjustmentExplanation({ row }: { row: Record<string, unknown> }) {
+  let adjustments: Array<{ group: string; code: string; amount: string }> = [];
+  try { adjustments = JSON.parse(String(row.adjustmentDetails || "{}")).adjustments || []; } catch { /* Legacy entries have no source breakdown. */ }
+  const codes = String(row.denialCode || "").split(",").filter(Boolean);
+  if (!adjustments.length && !codes.length) return null;
+  return <details className="payment-code-explanation"><summary>Code details</summary><div>{adjustments.length ? <>{adjustments.map((item, index) => <p key={index}>{item.group}-{item.code}: {adjustmentDescription(`${item.group}-${item.code}`)} · {currency(item.amount)}</p>)}<small>Original ERA breakdown</small></> : codes.map((code) => <p key={code}>{adjustmentDescription(code)}</p>)}</div></details>;
+}
+import { Fragment, FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LocalUser } from "../lib/auth";
 import { claimFieldHints } from "../lib/cms1500";
@@ -43,11 +52,15 @@ import { billedCoverageFields, coverageCoversDos, coverageEpisodeLabel, defaultB
 import {
   PAYMENT_ENTRY_STATUS_LABELS,
   PAYMENT_METHOD_OPTIONS,
+  CARD_BRANDS,
+  CARD_METHODS,
   buildReconciliationSnapshot,
   calculatePaymentTotalEffective,
+  eraMappingError,
   moneyNumber,
   type PaymentEntryStatus,
 } from "../lib/payment-posting";
+import { parseEra835 } from "../lib/era-835";
 import {
   buildPhysicalExamText,
   computeBmiFromMetric,
@@ -60,6 +73,8 @@ import {
 } from "../lib/objective-exam";
 import { PracxIntegrationDashboard } from "./PracxIntegrationDashboard";
 import { ClaimsInquiryWorkspace } from "./ClaimsInquiryWorkspace";
+import { PatientBillingHistory } from "./PatientBillingHistory";
+import { RPM_CODE_MASTER, RPM_MEDICARE_REFERENCE } from "../lib/rpm-code-master";
 import { CollectionArenaWorkspace } from "./CollectionArenaWorkspace";
 import {
   type WorkspaceVariant,
@@ -111,6 +126,7 @@ type WorkspaceData = {
   claimTransmissionLogs: DataRow[];
   paymentEntries: DataRow[];
   claimPayments: DataRow[];
+  claimPaymentServiceLines?: DataRow[];
   paymentLogs: DataRow[];
   remittances: DataRow[];
   payments: DataRow[];
@@ -151,7 +167,7 @@ const moduleMeta: Record<OperationsModule, { title: string; eyebrow: string; des
   scheduler: { title: "Scheduler", eyebrow: "Care delivery", description: "Provider schedules, appointment flow and pre-visit readiness.", action: "New appointment" },
   eligibility: { title: "Eligibility", eyebrow: "270 / 271 verification", description: "Automated and on-demand coverage verification before service.", action: "Run verification" },
   clinical: { title: "Clinical & EMR", eyebrow: "Encounter documentation", description: "Signed notes, diagnoses, procedures and billing readiness.", action: "New encounter" },
-  claim_inquiry: { title: "Claims", eyebrow: "Patient claim inquiry", description: "Search a patient, open a PRACX claim number, and follow Bill → Sent → Paid/Denied through Pri, Sec, Ter and Patient until the claim is closed.", action: "Open Claim prep" },
+  claim_inquiry: { title: "Claims", eyebrow: "Patient claim inquiry", description: "Search a patient, open a PRACX claim number, and follow Bill → Sent → Paid/Denied through Pri, Sec, Ter and Patient until the claim is closed.", action: "Open work queue" },
   collections: { title: "Collection Arena", eyebrow: "Outstanding A/R follow-up", description: "Submitted claims that still have a balance after the payer’s response days. Unsigned notes and missing records stay in the Bridge. Follow up here, then rebill to Pri or bill Sec after corrections.", action: "Open Claims" },
   claims: { title: "Claim preparation", eyebrow: "From EMR to billable claim", description: "Received claims scrub into Clean or Errors. Fix errors, then batch Clean claims for EDI or paper.", action: "Queue from EHR" },
   payments: { title: "Payment posting", eyebrow: "Checks, EFT, ERA & paper EOB", description: "Create payment entries, allocate across claims, auto-post when totals match. Submitted shows payment-level history only.", action: "New payment entry" },
@@ -247,7 +263,7 @@ function blankForm(module: OperationsModule): Record<string, string | boolean> {
     lineDiagnosisPointers: "A",
     familyPlanningIndicator: false,
   };
-  if (module === "payments") return { paymentMethod: "Check", paymentDate: today, paymentAmount: "0.00", offsetAmount: "0.00", refundAmount: "0.00", incentiveAmount: "0.00", otherAdjustments: "0.00", referenceNumber: "", notes: "" };
+  if (module === "payments") return { paymentMethod: "Check", paymentDate: today, postingDate: today, paymentAmount: "0.00", offsetAmount: "0.00", refundAmount: "0.00", incentiveAmount: "0.00", otherAdjustments: "0.00", referenceNumber: "", notes: "" };
   if (module === "payers") return { payerType: "Commercial", claimFilingIndicator: "CI", responseDays: "12" };
   if (module === "fees") return { effectiveDate: today, allowedAmount: "0.00" };
   if (module === "procedures") return { codeSet: "CPT", defaultCharge: "0.00", defaultPlaceOfService: "11" };
@@ -786,6 +802,8 @@ export function OperationsWorkspace({
 
   async function submitForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const saveAndApply = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("data-payment-intent") === "apply";
+    if (module === "payments" && form.savedPaymentNumber) return;
     if (module === "clinical" && formMode === "encounter-pick") return;
     if (module === "patients" && formMode === "documents") {
       const upload = new FormData(event.currentTarget);
@@ -836,7 +854,7 @@ export function OperationsWorkspace({
       : module === "payments" ? formMode === "era" ? "importEra" : "createPaymentEntry"
       : module === "payers" ? formMode === "plan" ? "createPlan" : form.id ? "updatePayer" : "createPayer"
       : module === "fees" ? "createFeeSchedule"
-      : module === "procedures" ? "createProcedure"
+      : module === "procedures" ? formMode === "edit-procedure" ? "updateProcedure" : "createProcedure"
       : module === "integrations" ? "updateIntegration"
       : "";
     if (!actionName) return;
@@ -909,6 +927,15 @@ export function OperationsWorkspace({
         window.location.assign(clinicalReturnTo);
         return;
       }
+      if (module === "payments" && submittedMode !== "era") {
+        if (saveAndApply && result.id) {
+          window.location.assign(`/payments?paymentId=${encodeURIComponent(String(result.id))}`);
+          return;
+        }
+        setForm((current) => ({ ...current, savedPaymentNumber: String(result.paymentNumber || ""), savedPaymentId: String(result.id || "") }));
+        setNotice(`Payment ${String(result.paymentNumber || "")} created.`);
+        return;
+      }
       setModalOpen(false);
       setNotice(
         module === "patients" ? formMode === "responsibility" ? "DOS responsibility profile saved with an audit record."
@@ -926,6 +953,7 @@ export function OperationsWorkspace({
         : module === "claims" ? "Claim draft prepared from encounter."
         : module === "payments" ? formMode === "era" ? "ERA received for matching and review." : "Payment entry created (Pending Posting)."
         : module === "integrations" ? "Integration configuration saved in safe mode."
+        : module === "procedures" ? formMode === "edit-procedure" ? "Procedure master and practice charge updated." : "Procedure code added to the charge master."
         : "Configuration saved.",
       );
     }
@@ -1016,9 +1044,11 @@ export function OperationsWorkspace({
     const issues = Array.isArray(result.issues) ? result.issues : [];
     const errors = issues.filter((issue) => (issue as DataRow).severity === "error").length;
     setNotice(
-      errors
-        ? `Bundle queued as ${String(result.status || "held")} with ${errors} blocking issue${errors === 1 ? "" : "s"}.`
-        : `Bundle validated and queued (${String(result.status || "pending")}).`,
+      result.duplicate
+        ? `Duplicate bundle recognized. Existing intake ${String(result.id || "")} was not created again.`
+        : errors
+          ? `Bundle queued as ${String(result.status || "held")} with ${errors} blocking issue${errors === 1 ? "" : "s"}.`
+          : `Bundle validated and queued (${String(result.status || "pending")}).`,
     );
     await loadData();
   }
@@ -1127,12 +1157,13 @@ export function OperationsWorkspace({
     if (result) setNotice("Paper batch marked mailed and moved to Submitted.");
   }
 
-  async function downloadBatchFile(id: string, kind: "edi" | "proof") {
+  async function downloadBatchFile(id: string, kind: "edi" | "proof" | "ackTxt" | "ackPdf") {
     const result = await action("downloadBatchFile", { id, kind });
     if (!result) return;
-    const content = String(result.content || "");
     const filename = String(result.filename || `${kind}.txt`);
-    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const blob = kind === "ackPdf"
+      ? new Blob([Uint8Array.from(atob(String(result.base64 || "")), (character) => character.charCodeAt(0))], { type: "application/pdf" })
+      : new Blob([String(result.content || "")], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1169,8 +1200,34 @@ export function OperationsWorkspace({
   async function processEra(id: string) {
     const result = await action("processEra", { id });
     if (result) {
-      setNotice(`ERA processed into ${String(result.paymentNumber || "payment")} · ${Number(result.matched || 0)} matched, ${Number(result.unmatched || 0)} unmatched.`);
+      setNotice(`ERA processed into ${String(result.paymentNumber || "payment")} · ${Number(result.matched || 0)} matched, ${Number(result.autoPosted || 0)} auto-posted, ${Number(result.unmatched || 0)} unmatched${result.autoPostError ? ` · ${String(result.autoPostError)}` : ""}.`);
     }
+    return Boolean(result);
+  }
+
+  async function startEra(id: string) {
+    const result = await action("processEra", { id, autoPost: false });
+    if (result) {
+      setNotice(`ERA started in editable mode · ${Number(result.matched || 0)} matched, ${Number(result.unmatched || 0)} unmatched. Review CPT allocations, then Process ERA.`);
+    }
+    return Boolean(result);
+  }
+
+  async function seedEraClaims(id: string) {
+    const result = await action("seedEraClaims", { id });
+    if (result) setNotice(`Demo patient setup complete · ${Number(result.created || 0)} new claim(s) created. Addresses and mixed responsibility coverage are ready for testing.`);
+    return Boolean(result);
+  }
+
+  async function createEraDenialVariant(id: string) {
+    const result = await action("createEraTestVariant", { id, variant: "denial" });
+    if (result) setNotice(`Created ${String(result.fileName || "denial-test.835")} with fresh denied claim numbers and zero payments. Open it, click Ensure demo patients & coverage, then Post ERA. The original ERA was not changed.`);
+    return Boolean(result);
+  }
+
+  async function createEraZeroCheckVariant(id: string) {
+    const result = await action("createEraTestVariant", { id, variant: "zero_check" });
+    if (result) setNotice(`Created ${String(result.fileName || "zero-check-test.835")} with a zero check and the original CPT payments. The original ERA was not changed.`);
     return Boolean(result);
   }
 
@@ -1343,11 +1400,13 @@ export function OperationsWorkspace({
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">PX</span><div><strong>{brand.title}</strong><small>{brand.subtitle}</small></div></div>
         <nav aria-label="Primary navigation">
-          <p className="nav-label">Workspace</p>
-          {navItems.map((item) => (
-            <Link className={`nav-item ${item.key === module ? "active" : ""}`} href={item.href} key={item.key}>
-              <span className="nav-dot" aria-hidden="true" />{item.label}
-            </Link>
+          {navItems.map((item, index) => (
+            <Fragment key={item.key}>
+              {(index === 0 || item.section !== navItems[index - 1]?.section) && <p className="nav-label">{item.section || "Workspace"}</p>}
+              <Link className={`nav-item ${item.key === module || (item.key === "claim_inquiry" && module === "claims") ? "active" : ""}`} href={item.href}>
+                <span className="nav-dot" aria-hidden="true" />{item.label}
+              </Link>
+            </Fragment>
           ))}
           <p className="nav-label setup-label">Configuration</p>
           {configLinks.map((item) => (
@@ -1373,13 +1432,20 @@ export function OperationsWorkspace({
         </header>
 
         <section className="operations-content">
+          {(module === "claim_inquiry" || module === "claims") && (
+            <nav className="claim-workspace-switch" aria-label="Claims workspace views">
+              <Link className={module === "claim_inquiry" ? "selected" : ""} href={`${workspaceBasePath(variant)}/claim-inquiry`.replace(/\/{2,}/g, "/") || "/claim-inquiry"}>Patient &amp; claim history</Link>
+              <Link className={module === "claims" ? "selected" : ""} href={`${workspaceBasePath(variant)}/claims`.replace(/\/{2,}/g, "/") || "/claims"}>Work queue · prepare &amp; submit</Link>
+            </nav>
+          )}
           {setupModule && (
             <div className="section-tabs" role="tablist" aria-label="Practice setup sections">
               <Link href={setupTabHref(variant, "/setup")} role="tab">Facilities</Link>
               <Link href={setupTabHref(variant, "/setup/providers")} role="tab">Providers</Link>
               <Link href={setupTabHref(variant, "/setup/referring-providers")} role="tab">Referring providers</Link>
               <Link className={module === "payers" ? "selected" : ""} href={setupTabHref(variant, "/setup/payers")} role="tab">Payers & plans</Link>
-              <Link className={module === "fees" ? "selected" : ""} href={setupTabHref(variant, "/setup/fee-schedules")} role="tab">Fee schedules</Link>
+              <Link className={module === "fees" ? "selected" : ""} href={setupTabHref(variant, "/setup/fee-schedules")} role="tab">Payer fee schedules</Link>
+              <Link href={setupTabHref(variant, "/setup/fee-setup")} role="tab">Fee setup</Link>
               <Link className={module === "procedures" ? "selected" : ""} href={setupTabHref(variant, "/setup/procedure-codes")} role="tab">Procedure codes</Link>
               {currentUser.role.toLowerCase() === "administrator" && (
                 <Link href={setupTabHref(variant, "/setup/claim-configuration")} role="tab">Claim configuration</Link>
@@ -1427,6 +1493,7 @@ export function OperationsWorkspace({
                   })}</tbody></table>
               </TablePanel>
               <SelectedPatientInsurance data={data} patientId={selectedPatientId} isSaving={isSaving} onCheck={verifyPatientEligibility} onDocuments={openDocuments} onEdit={editPatient} />
+              {selectedPatientId && <PatientBillingHistory basePath={workspaceBasePath(variant)} data={{ claims: data.claims, claimWorkflowEvents: data.claimWorkflowEvents, payments: data.payments, paymentEntries: data.paymentEntries, claimPayments: data.claimPayments, claimPaymentServiceLines: data.claimPaymentServiceLines || [], remittances: data.remittances, encounters: data.encounters, claimBatchMembers: data.claimBatchMembers, claimBatches: data.claimBatches, claimTransmissionLogs: data.claimTransmissionLogs, paymentLogs: data.paymentLogs, reconciliationLogs: data.reconciliationLogs }} patientId={selectedPatientId} />}
             </>
           )}
 
@@ -1500,14 +1567,13 @@ export function OperationsWorkspace({
           {data && module === "collections" && (
             <>
             <CollectionArenaWorkspace
-              claimPrepHref={`${workspaceBasePath(variant)}/claims`.replace(/\/{2,}/g, "/") || "/claims"}
               data={data}
-              inquiryHref={`${workspaceBasePath(variant)}/claim-inquiry`.replace(/\/{2,}/g, "/") || "/claim-inquiry"}
               isSaving={isSaving}
               onOpenClaim={(claimId) => setArenaEditorClaimId(claimId)}
               onAction={async (name, payload) => {
                 const result = await action(name, payload);
                 if (!result) return null;
+                if (name === "seedCollectionFixtures") setNotice("Collection test claims loaded: aged open, denied, secondary and patient balances are ready.");
                 if (name === "setClaimFollowUp") setNotice(String(payload.followUpStatus) === "in_process" ? "Marked in process to pay." : "Marked denied. Rebill or bill the next party.");
                 if (name === "rebillClaim") setNotice("Claim moved to Rebill and returned to Claim prep.");
                 if (name === "billClaimParty") {
@@ -1641,6 +1707,10 @@ export function OperationsWorkspace({
               onImportEra={() => openForm("era")}
               onManualPost={(payload) => manualPostClaimPayment(payload)}
               onPopulate={(id, claimIds) => populatePaymentClaims(id, claimIds)}
+              onStartEra={(id) => startEra(id)}
+              onSeedEraClaims={(id) => seedEraClaims(id)}
+              onCreateEraDenialVariant={(id) => createEraDenialVariant(id)}
+              onCreateEraZeroCheckVariant={(id) => createEraZeroCheckVariant(id)}
               onProcessEra={(id) => processEra(id)}
               onRecalculate={(id, header) => recalculatePayment(id, header)}
               search={search}
@@ -1658,7 +1728,7 @@ export function OperationsWorkspace({
               ]} />
               <div className="report-date-guide">{["Date of service", "Transaction date", "Payment date", "Posting date", "First billed date", "Last billed date"].map((item) => <span key={item}>{item}</span>)}</div>
               <TablePanel title="Complete transaction ledger" description="Every charge, payment, adjustment, refund and transfer with all reporting dates.">
-                <table><thead><tr><th>Patient / claim</th><th>Transaction</th><th>Source</th><th>Amount</th><th>DOS</th><th>Transaction</th><th>Payment</th><th>Posting</th><th>First billed</th><th>Last billed</th></tr></thead><tbody>{data.transactions.map((row) => <tr key={value(row, "id")}><td><strong className="location-name">{value(row, "patientName")}</strong><small className="address">{value(row, "claimNumber") || "No claim"}</small></td><td><strong className="location-name">{value(row, "transactionType").replaceAll("_", " ")}</strong><small className="address">{value(row, "description")}</small></td><td>{value(row, "source")}</td><td className={Number(value(row, "amount")) < 0 ? "amount-credit" : "amount-charge"}>{currency(value(row, "amount"))}</td><td>{shortDate(value(row, "dateOfService"))}</td><td>{shortDate(value(row, "transactionDate"))}</td><td>{shortDate(value(row, "paymentDate"))}</td><td>{shortDate(value(row, "postingDate"))}</td><td>{shortDate(value(row, "firstBilledDate"))}</td><td>{shortDate(value(row, "lastBilledDate"))}</td></tr>)}</tbody></table>
+                <table><thead><tr><th>Patient / claim</th><th>Transaction</th><th>Payment ID</th><th>Source</th><th>Amount</th><th>DOS</th><th>Transaction</th><th>Payment</th><th>Posting</th><th>First billed</th><th>Last billed</th></tr></thead><tbody>{data.transactions.map((row) => <tr key={value(row, "id")}><td><strong className="location-name">{value(row, "patientName")}</strong><small className="address">{value(row, "claimNumber") || "No claim"}</small></td><td><strong className="location-name">{value(row, "transactionType").replaceAll("_", " ")}</strong><small className="address">{value(row, "description")}</small></td><td>{value(row, "paymentEntryId") ? <Link href={`${workspaceBasePath(variant)}/payments?paymentId=${encodeURIComponent(value(row, "paymentEntryId"))}`}>{value(row, "paymentNumber") || value(row, "paymentEntryId")}</Link> : "—"}</td><td>{value(row, "source")}</td><td className={Number(value(row, "amount")) < 0 ? "amount-credit" : "amount-charge"}>{currency(value(row, "amount"))}</td><td>{shortDate(value(row, "dateOfService"))}</td><td>{shortDate(value(row, "transactionDate"))}</td><td>{shortDate(value(row, "paymentDate"))}</td><td>{shortDate(value(row, "postingDate"))}</td><td>{shortDate(value(row, "firstBilledDate"))}</td><td>{shortDate(value(row, "lastBilledDate"))}</td></tr>)}</tbody></table>
               </TablePanel>
             </>
           )}
@@ -1674,14 +1744,22 @@ export function OperationsWorkspace({
           {data && module === "fees" && (
             <>
               <SummaryCards cards={[["Fee schedules", String(data.feeSchedules.length), "Active contract tables"], ["Contracted codes", String(data.feeScheduleItems.length), "Allowed amount entries"], ["Payers represented", String(new Set(data.feeSchedules.map((row) => value(row, "payerId"))).size), "Contract coverage"], ["Effective controls", "Enabled", "Date-based fee selection"]]} />
-              <TablePanel title="Contracted fee schedules" description="Payer allowed amounts used by payment variance analysis."><table><thead><tr><th>Schedule</th><th>Payer</th><th>Effective</th><th>Procedure</th><th>Allowed</th><th>Status</th></tr></thead><tbody>{data.feeSchedules.map((row) => { const payer = data.payers.find((item) => value(item, "id") === value(row, "payerId")); const item = data.feeScheduleItems.find((entry) => value(entry, "feeScheduleId") === value(row, "id")); const procedure = data.procedureCodes.find((entry) => value(entry, "id") === value(item || {}, "procedureCodeId")); return <tr key={value(row, "id")}><td><strong>{value(row, "name")}</strong></td><td>{value(payer || {}, "name") || "Standard"}</td><td>{shortDate(value(row, "effectiveDate"))}</td><td><CodeList codes={procedure ? [value(procedure, "code")] : []} /></td><td>{currency(value(item || {}, "allowedAmount"))}</td><td><Status value={value(row, "status")} /></td></tr>; })}</tbody></table></TablePanel>
+              <TablePanel title="Contracted fee schedules" description="Payer allowed amounts used by payment variance analysis."><table><thead><tr><th>Schedule</th><th>Payer</th><th>Effective</th><th>Procedure</th><th>Allowed</th><th>Status</th></tr></thead><tbody>{data.feeSchedules.flatMap((row) => {
+                const payer = data.payers.find((item) => value(item, "id") === value(row, "payerId"));
+                const items = data.feeScheduleItems.filter((entry) => value(entry, "feeScheduleId") === value(row, "id"));
+                return (items.length ? items : [{} as DataRow]).map((item) => {
+                  const procedure = data.procedureCodes.find((entry) => value(entry, "id") === value(item, "procedureCodeId"));
+                  return <tr key={`${value(row, "id")}-${value(item, "id") || "empty"}`}><td><strong>{value(row, "name")}</strong></td><td>{value(payer || {}, "name") || "Standard"}</td><td>{shortDate(value(row, "effectiveDate"))}</td><td><CodeList codes={procedure ? [value(procedure, "code")] : []} /></td><td>{currency(value(item, "allowedAmount"))}</td><td><Status value={value(row, "status")} /></td></tr>;
+                });
+              })}</tbody></table></TablePanel>
             </>
           )}
 
           {data && module === "procedures" && (
             <>
-              <SummaryCards cards={[["Active codes", String(data.procedureCodes.length), "CPT and HCPCS"], ["Average charge", currency(data.procedureCodes.reduce((sum, row) => sum + Number(value(row, "defaultCharge")), 0) / Math.max(1, data.procedureCodes.length)), "Default charge master"], ["Authorization rules", String(data.procedureCodes.filter((row) => value(row, "requiresAuthorization") === "yes").length), "Codes requiring review"], ["Claim mapping", "24D", "CMS-1500 service lines"]]} />
-              <TablePanel title="Procedure charge master" description="Codes, charges, place of service and billing controls."><table><thead><tr><th>Code</th><th>Description</th><th>Set</th><th>Default charge</th><th>POS</th><th>Authorization</th><th>Status</th></tr></thead><tbody>{data.procedureCodes.map((row) => <tr key={value(row, "id")}><td><CodeList codes={[value(row, "code")]} /></td><td>{value(row, "description")}</td><td>{value(row, "codeSet")}</td><td>{currency(value(row, "defaultCharge"))}</td><td>{value(row, "defaultPlaceOfService")}</td><td><Status value={value(row, "requiresAuthorization")} /></td><td><Status value={value(row, "status")} /></td></tr>)}</tbody></table></TablePanel>
+              <SummaryCards cards={[["Active codes", String(data.procedureCodes.length), "CPT and HCPCS"], ["RPM master codes", String(RPM_CODE_MASTER.length), "2026 Medicare reference set"], ["Custom practice charges", String(data.procedureCodes.filter((row) => RPM_CODE_MASTER.some((rpm) => rpm.code === value(row, "code")) && Number(value(row, "defaultCharge")) > 0).length), "RPM charge amounts configured"], ["Claim mapping", "24D", "CMS-1500 / 837P service lines"]]} />
+              <div className="rpm-fee-notice"><strong>Medicare reference ≠ practice charge.</strong> The Medicare column is a 2026 national-average non-facility reference from the linked source. Actual MPFS reimbursement varies by locality and other factors; each practice charge is separate and must be set by your billing administrator. <a href={RPM_MEDICARE_REFERENCE.source} rel="noreferrer" target="_blank">Source</a></div>
+              <TablePanel title="Procedure & RPM charge master" description="RPM codes are seeded into the service-code master and can be used on claim lines. Edit each practice charge; payer allowed amounts remain in fee schedules."><table><thead><tr><th>Code</th><th>Description</th><th>Set</th><th>Medicare reference allowed</th><th>Practice charge</th><th>POS</th><th>Authorization</th><th>Status</th><th /></tr></thead><tbody>{data.procedureCodes.map((row) => { const rpm = RPM_CODE_MASTER.find((item) => item.code === value(row, "code")); const masterItem = data.feeScheduleItems.find((item) => value(item, "feeScheduleId") === RPM_MEDICARE_REFERENCE.scheduleId && value(item, "procedureCodeId") === value(row, "id")); return <tr key={value(row, "id")}><td><CodeList codes={[value(row, "code")]} />{rpm && <small className="rpm-code-badge">RPM</small>}</td><td>{value(row, "description")}</td><td>{value(row, "codeSet")}</td><td>{rpm ? currency(value(masterItem || {}, "allowedAmount") || rpm.medicareReferenceFee) : "—"}</td><td>{currency(value(row, "defaultCharge"))}{rpm && Number(value(row, "defaultCharge")) <= 0 && <small className="address">Set practice charge</small>}</td><td>{value(row, "defaultPlaceOfService")}</td><td><Status value={value(row, "requiresAuthorization")} /></td><td><Status value={value(row, "status")} /></td><td><button className="table-button" onClick={() => { setFormMode("edit-procedure"); setForm({ id: value(row, "id"), code: value(row, "code"), description: value(row, "description"), codeSet: value(row, "codeSet"), defaultCharge: value(row, "defaultCharge"), defaultPlaceOfService: value(row, "defaultPlaceOfService"), requiresAuthorization: value(row, "requiresAuthorization") === "yes" }); setError(""); setNotice(""); setModalOpen(true); }} type="button">Edit</button></td></tr>; })}</tbody></table></TablePanel>
             </>
           )}
 
@@ -1744,7 +1822,7 @@ export function OperationsWorkspace({
               {module === "payments" && (formMode === "era" ? <EraForm data={data} form={form} update={updateField} /> : <PaymentEntryForm data={data} form={form} update={updateField} />)}
               {module === "payers" && (formMode === "plan" ? <PlanForm data={data} form={form} update={updateField} /> : <PayerForm form={form} update={updateField} />)}
               {module === "fees" && <FeeForm data={data} form={form} update={updateField} />}
-              {module === "procedures" && <ProcedureForm form={form} update={updateField} />}
+              {module === "procedures" && <ProcedureForm form={form} update={updateField} editing={formMode === "edit-procedure"} />}
               {module === "integrations" && <IntegrationForm data={data} form={form} update={updateField} />}
               {error && <div className="notice error form-error">{error}</div>}
               <div className="modal-footer">
@@ -1758,7 +1836,9 @@ export function OperationsWorkspace({
                     {documentationNav.label}
                   </button>
                 )}
-                <button className="secondary-button" onClick={() => void closeModal()} type="button">{module === "clinical" && formMode === "encounter" ? "Close encounter" : "Cancel"}</button>
+                <button className="secondary-button" onClick={() => void closeModal()} type="button">{module === "clinical" && formMode === "encounter" ? "Close encounter" : module === "payments" && form.savedPaymentNumber ? "Done" : "Cancel"}</button>
+                {module === "payments" && formMode !== "era" && !form.savedPaymentNumber && <button className="secondary-button" type="submit" data-payment-intent="apply" disabled={isSaving}>Save &amp; Apply</button>}
+                {module === "payments" && form.savedPaymentId && <a className="primary-button" href={`/payments?paymentId=${encodeURIComponent(String(form.savedPaymentId))}`}>Apply to claims</a>}
                 {module === "patients" && ["", "edit-patient"].includes(formMode) && <button className="secondary-button schedule-after-save" disabled={isSaving} name="submitIntent" type="submit" value="schedule">Save & schedule</button>}
                 {module === "clinical" && formMode === "encounter-pick" ? null : module === "clinical" && formMode === "encounter" ? <>
                   <button className="secondary-button" disabled={isSaving} name="submitIntent" type="submit" value="draft">Save draft</button>
@@ -1785,7 +1865,7 @@ export function OperationsWorkspace({
                   >
                     {isSaving ? "Saving…" : completionNav?.readyToBill ? "Ready to bill ✓" : "Ready to bill"}
                   </button>
-                </> : formMode !== "encounter-pick" ? <button className="primary-button" disabled={isSaving} type="submit">{isSaving ? (formMode === "documents" ? "Uploading…" : "Saving…") : formMode === "vitals" ? "Save vitals & mark ready" : formMode === "order-result" ? "Save result" : formMode === "medication" ? "Add medication" : formMode === "quick-patient" ? "Save patient & continue booking" : formMode === "documents" ? "Upload documents" : formMode === "reschedule" ? "Save new time" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : "Save and continue"}</button> : null}
+                </> : formMode !== "encounter-pick" ? <button className="primary-button" disabled={isSaving || (module === "payments" && Boolean(form.savedPaymentNumber))} type="submit">{module === "payments" && form.savedPaymentNumber ? "Payment saved" : isSaving ? (formMode === "documents" ? "Uploading…" : "Saving…") : formMode === "vitals" ? "Save vitals & mark ready" : formMode === "order-result" ? "Save result" : formMode === "medication" ? "Add medication" : formMode === "quick-patient" ? "Save patient & continue booking" : formMode === "documents" ? "Upload documents" : formMode === "reschedule" ? "Save new time" : formMode === "eligibility-review" ? "Confirm & apply selected updates" : formMode === "responsibility" ? "Save DOS profile" : formMode === "close-responsibility" ? "Close responsibility period" : formMode === "coverage-order" ? "Save default order" : formMode === "coverage" ? "Save coverage" : formMode === "edit-patient" ? "Save changes" : module === "payments" ? "Save" : "Save and continue"}</button> : null}
               </div>
             </form>
           </section>
@@ -1815,7 +1895,7 @@ function ClaimsWorkbench({
   onGenerate: (ids: string[]) => void;
   onCreateBatches: (ids: string[]) => void;
   onTransmitBatch: (id: string) => void;
-  onDownloadBatchFile: (id: string, kind: "edi" | "proof") => void;
+  onDownloadBatchFile: (id: string, kind: "edi" | "proof" | "ackTxt" | "ackPdf") => void;
   onMarkPaperBatchMailed: (id: string) => void;
   onMarkPrinted: (id: string) => Promise<boolean>;
   onMarkMailed: (id: string, mailMethod: string, trackingNumber: string) => Promise<boolean>;
@@ -1951,7 +2031,7 @@ function ClaimsWorkbench({
             <th>Batch ID</th><th>Payer</th><th>Claims</th><th>Charge</th><th>Status</th>
             <th>{mode === "paper" ? "Proof file" : "EDI file"}</th>
             <th>Proof</th>
-            {mode === "submitted" && <th>Clearinghouse</th>}
+            {mode === "submitted" && <th>Acknowledgment</th>}
             <th>Actions</th>
           </tr>
         </thead>
@@ -1967,11 +2047,12 @@ function ClaimsWorkbench({
                 <td><Status value={value(row, "status")} /></td>
                 <td className="mono">{mode === "paper" ? (value(row, "proofFileName") || "—") : (value(row, "ediFileName") || "—")}</td>
                 <td className="mono">{value(row, "proofFileName") || "—"}</td>
-                {mode === "submitted" && <td><small>{value(row, "clearinghouseResponse") || "—"}</small></td>}
+                {mode === "submitted" && <td><strong className="mono">ACK-{value(row, "batchNumber")}</strong><small className="address">{value(row, "clearinghouseResponse") || "—"}</small></td>}
                 <td>
                   <div className="row-actions">
                     {mode === "edi" && value(row, "ediFileName") && <button onClick={() => onDownloadBatchFile(batchId, "edi")} type="button">Download EDI</button>}
                     {value(row, "proofFileName") && <button onClick={() => onDownloadBatchFile(batchId, "proof")} type="button">Download proof</button>}
+                    {mode === "submitted" && value(row, "clearinghouseResponse") && <><button onClick={() => onDownloadBatchFile(batchId, "ackTxt")} type="button">Ack TXT</button><button onClick={() => onDownloadBatchFile(batchId, "ackPdf")} type="button">Ack PDF</button></>}
                     {mode === "edi" && <button className="primary-button" disabled={isSaving} onClick={() => onTransmitBatch(batchId)} type="button">Transmit</button>}
                     {mode === "paper" && <button className="primary-button" disabled={isSaving} onClick={() => onMarkPaperBatchMailed(batchId)} type="button">Mark mailed</button>}
                   </div>
@@ -2213,6 +2294,10 @@ function PaymentPostingWorkbench({
   onFixLines,
   onAutoPost,
   onManualPost,
+  onStartEra,
+  onSeedEraClaims,
+  onCreateEraDenialVariant,
+  onCreateEraZeroCheckVariant,
   onProcessEra,
   onRecalculate,
 }: {
@@ -2226,14 +2311,33 @@ function PaymentPostingWorkbench({
   onFixLines: (paymentId: string, lines: Array<Record<string, unknown>>, header?: Record<string, unknown>) => Promise<boolean>;
   onAutoPost: (paymentId: string) => void;
   onManualPost: (payload: Record<string, unknown>) => Promise<boolean>;
+  onStartEra: (id: string) => Promise<boolean>;
+  onSeedEraClaims: (id: string) => Promise<boolean>;
+  onCreateEraDenialVariant: (id: string) => Promise<boolean>;
+  onCreateEraZeroCheckVariant: (id: string) => Promise<boolean>;
   onProcessEra: (id: string) => Promise<boolean>;
   onRecalculate: (paymentId: string, header?: Record<string, unknown>) => Promise<boolean>;
 }) {
   type Bucket = "pending" | "errors" | "submitted" | "era";
   const [bucket, setBucket] = useState<Bucket>("pending");
   const [selectedPaymentId, setSelectedPaymentId] = useState("");
+  const [paymentLookup, setPaymentLookup] = useState("");
+  const [paymentSort, setPaymentSort] = useState({ key: "createdAt", direction: "desc" as "asc" | "desc" });
+  const [paymentLookupNotice, setPaymentLookupNotice] = useState("");
+  const [paymentLinkHandled, setPaymentLinkHandled] = useState(false);
+  const [selectedEraId, setSelectedEraId] = useState("");
+  const [selectedEraClaimPaymentId, setSelectedEraClaimPaymentId] = useState("");
+  const [eraExceptionFilter, setEraExceptionFilter] = useState<"all" | "unmatched" | "errors" | "denials">("all");
+  const [selectedPaymentClaimId, setSelectedPaymentClaimId] = useState("");
+  const [postingMonth, setPostingMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [selectedClaimIds, setSelectedClaimIds] = useState<Set<string>>(new Set());
+  const [claimSearch, setClaimSearch] = useState("");
+  const [claimDosFrom, setClaimDosFrom] = useState("");
+  const [claimDosTo, setClaimDosTo] = useState("");
   const [lineDrafts, setLineDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [serviceLineDrafts, setServiceLineDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [eraClaimDrafts, setEraClaimDrafts] = useState<Record<string, string>>({});
+  const [eraServiceDrafts, setEraServiceDrafts] = useState<Record<string, Record<string, string>>>({});
   const [headerDraft, setHeaderDraft] = useState<Record<string, string>>({});
   const query = search.trim().toLowerCase();
   const entries = data.paymentEntries || [];
@@ -2245,18 +2349,79 @@ function PaymentPostingWorkbench({
     return `${value(row, "paymentNumber")} ${value(row, "payerName")} ${value(row, "referenceNumber")} ${value(row, "paymentMethod")}`.toLowerCase().includes(query);
   };
 
-  const pendingEntries = entries.filter((row) => ["pending", "partially_posted"].includes(value(row, "paymentStatus")) && matchesEntry(row));
-  const errorEntries = entries.filter((row) => value(row, "paymentStatus") === "error" && matchesEntry(row));
-  const submittedEntries = entries.filter((row) => value(row, "paymentStatus") === "fully_posted" && matchesEntry(row));
+  const inPostingMonth = (row: DataRow) => !postingMonth || [value(row, "paymentDate"), value(row, "postingDate"), value(row, "receivedAt")].some((date) => date.startsWith(postingMonth));
+  const pendingEntries = entries.filter((row) => inPostingMonth(row) && ["pending", "partially_posted"].includes(value(row, "paymentStatus")) && matchesEntry(row));
+  const errorEntries = entries.filter((row) => inPostingMonth(row) && value(row, "paymentStatus") === "error" && matchesEntry(row));
+  const submittedEntries = entries.filter((row) => inPostingMonth(row) && value(row, "paymentStatus") === "fully_posted" && matchesEntry(row));
   const counts = {
-    pending: entries.filter((row) => ["pending", "partially_posted"].includes(value(row, "paymentStatus"))).length,
-    errors: entries.filter((row) => value(row, "paymentStatus") === "error").length,
-    submitted: entries.filter((row) => value(row, "paymentStatus") === "fully_posted").length,
-    era: data.remittances.filter((row) => value(row, "status") !== "posted" && !(value(row, "processedStatus") === "processed" && value(row, "paymentEntryId"))).length,
+    pending: entries.filter((row) => inPostingMonth(row) && ["pending", "partially_posted"].includes(value(row, "paymentStatus"))).length,
+    errors: entries.filter((row) => inPostingMonth(row) && value(row, "paymentStatus") === "error").length,
+    submitted: entries.filter((row) => inPostingMonth(row) && value(row, "paymentStatus") === "fully_posted").length,
+    era: data.remittances.filter((row) => inPostingMonth(row) && value(row, "status") !== "posted").length,
   };
 
   const selectedPayment = entries.find((row) => value(row, "id") === selectedPaymentId) || null;
+  const isSelectedEraPayment = value(selectedPayment || {}, "paymentMethod").toUpperCase() === "ERA";
+  const selectedEra = data.remittances.find((row) => value(row, "id") === selectedEraId) || null;
+  const selectedEraPaymentId = selectedEra ? value(selectedEra, "paymentEntryId") : "";
+  const allSelectedEraClaims = selectedEraPaymentId
+    ? claimPayments.filter((row) => value(row, "paymentId") === selectedEraPaymentId)
+    : [];
+  const selectedEraClaims = allSelectedEraClaims;
+  const selectedEraClaimPaymentIds = new Set(allSelectedEraClaims.map((row) => value(row, "id")));
+  const selectedEraServiceLines = (data.claimPaymentServiceLines || []).filter((row) => selectedEraClaimPaymentIds.has(value(row, "claimPaymentId")));
+  const selectedEraClaim = selectedEraClaims.find((row) => value(row, "id") === selectedEraClaimPaymentId) || null;
+  const selectedEraClaimLines = selectedEraClaim ? selectedEraServiceLines.filter((row) => value(row, "claimPaymentId") === selectedEraClaimPaymentId) : [];
+  const eraClaimValue = (field: string) => eraClaimDrafts[field] ?? value(selectedEraClaim || {}, field);
+  const eraServiceValue = (row: DataRow, field: string) => eraServiceDrafts[value(row, "id")]?.[field] ?? value(row, field);
+  const saveEraClaim = async () => {
+    if (!selectedEraPaymentId || !selectedEraClaim) return;
+    const line = { id: value(selectedEraClaim, "id"), allowedAmount: eraClaimValue("allowedAmount"), paidAmount: eraClaimValue("paidAmount"), adjustmentAmount: eraClaimValue("adjustmentAmount"), patientResponsibility: eraClaimValue("patientResponsibility"), denialCode: eraClaimValue("denialCode") };
+    const serviceLines = selectedEraClaimLines.filter((row) => value(row, "postingStatus") !== "posted").map((row) => ({ id: value(row, "id"), allowedAmount: eraServiceValue(row, "allowedAmount"), paidAmount: eraServiceValue(row, "paidAmount"), adjustmentAmount: eraServiceValue(row, "adjustmentAmount"), patientResponsibility: eraServiceValue(row, "patientResponsibility"), denialCode: eraServiceValue(row, "denialCode"), eobPage: eraServiceValue(row, "eobPage"), nextAction: eraServiceValue(row, "nextAction") }));
+    const mismatch = serviceLines.find((row) => Math.abs(moneyNumber(value(selectedEraClaimLines.find((source) => value(source, "id") === row.id) || {}, "chargeAmount")) - moneyNumber(row.paidAmount) - moneyNumber(row.adjustmentAmount) - moneyNumber(row.patientResponsibility)) > 0.01);
+    if (mismatch) { setNotice(`CPT ${value(selectedEraClaimLines.find((source) => value(source, "id") === mismatch.id) || {}, "procedureCode")} is unbalanced: charge must equal paid + adjustment + responsibility.`); return; }
+    if (await onFixLines(selectedEraPaymentId, [line], { serviceLines })) {
+      setEraClaimDrafts({});
+      setEraServiceDrafts({});
+    }
+  };
+  const selectedEraUnmatched = useMemo(() => {
+    try { return JSON.parse(value(selectedEra || {}, "unmatchedJson") || "[]") as Array<Record<string, unknown>>; } catch { return []; }
+  }, [selectedEra]);
+  const selectedEraPostedCount = allSelectedEraClaims.filter((row) => value(row, "postingStatus") === "posted").length;
+  const selectedEraAllocatedPaid = allSelectedEraClaims.reduce((sum, row) => sum + moneyNumber(value(row, "paidAmount")), 0);
+  const selectedEraExceptionRows = useMemo(() => {
+    const unmatchedRows = selectedEraUnmatched.map((claim) => ({
+      kind: "unmatched",
+      claimNumber: String(claim.claimControlNumber || "—"),
+      patientName: [claim.patientFirstName, claim.patientLastName].filter(Boolean).join(" ") || "—",
+      dateOfService: String(claim.dateOfService || ""),
+      paidAmount: String(claim.paidAmount || "0"),
+      reason: String(claim.reason || "Claim not matched"),
+      claimPaymentId: "",
+    }));
+    const claimRows = selectedEraClaims.flatMap((claim) => {
+      const lines = selectedEraServiceLines.filter((line) => value(line, "claimPaymentId") === value(claim, "id"));
+      const hasError = value(claim, "postingStatus") === "error" || value(claim, "errorMessage") || lines.some((line) => value(line, "postingStatus") === "error" || value(line, "errorMessage"));
+      const hasDenial = Boolean(value(claim, "denialCode") || lines.some((line) => value(line, "denialCode")));
+      if (!hasError && !hasDenial) return [];
+      const kind = hasError ? "errors" : "denials";
+      return [{ kind, claimNumber: value(claim, "claimNumber"), patientName: value(claim, "patientName") || "—", dateOfService: value(claim, "dateOfService"), paidAmount: value(claim, "paidAmount"), reason: value(claim, "errorMessage") || (hasDenial ? `Denial ${value(claim, "denialCode") || lines.find((line) => value(line, "denialCode"))?.denialCode}` : "Posting exception"), claimPaymentId: value(claim, "id") }];
+    });
+    return [...unmatchedRows, ...claimRows].filter((row) => eraExceptionFilter === "all" || row.kind === eraExceptionFilter);
+  }, [eraExceptionFilter, selectedEraClaims, selectedEraServiceLines, selectedEraUnmatched]);
+  const selectedEraBlockingRows = claimPayments.filter((row) => value(row, "paymentId") === selectedEraPaymentId && (
+    value(row, "postingStatus") === "error" || value(row, "errorMessage") ||
+    (data.claimPaymentServiceLines || []).some((line) => value(line, "claimPaymentId") === value(row, "id") && (value(line, "postingStatus") === "error" || value(line, "errorMessage")))
+  ));
+  const eraPayment = entries.find((row) => value(row, "id") === selectedEraPaymentId);
+  const selectedEraAmountMatches = buildReconciliationSnapshot({ ...(eraPayment || {}), paymentMethod: "ERA", claimPayments: allSelectedEraClaims }).balanced;
+  const selectedEraHasUnsavedChanges = Object.keys(eraClaimDrafts).length > 0 || Object.keys(eraServiceDrafts).length > 0;
+  const selectedEraReadyToPost = Boolean(eraPayment) && allSelectedEraClaims.length > 0 && !selectedEraHasUnsavedChanges && !eraMappingError(value(selectedEra || {}, "unmatchedJson")) && selectedEraUnmatched.length === 0 && selectedEraBlockingRows.length === 0 && selectedEraAmountMatches;
   const selectedLines = claimPayments.filter((row) => value(row, "paymentId") === selectedPaymentId);
+  const selectedServiceLines = (data.claimPaymentServiceLines || []).filter((row) => value(row, "paymentId") === selectedPaymentId);
+  const selectedPaymentClaim = selectedLines.find((row) => value(row, "id") === selectedPaymentClaimId) || null;
+  const selectedPaymentClaimLines = selectedPaymentClaim ? selectedServiceLines.filter((row) => value(row, "claimPaymentId") === value(selectedPaymentClaim, "id")) : [];
   const selectedLogs = logs.filter((row) => value(row, "paymentId") === selectedPaymentId).slice(0, 40);
   const headerValue = (field: string) => headerDraft[field] ?? value(selectedPayment || {}, field);
   const effectiveTotal = calculatePaymentTotalEffective({
@@ -2270,7 +2435,7 @@ function PaymentPostingWorkbench({
     const draft = lineDrafts[value(row, "id")];
     return sum
       + moneyNumber(draft?.paidAmount ?? value(row, "paidAmount"))
-      + moneyNumber(draft?.adjustmentAmount ?? value(row, "adjustmentAmount"));
+      + (value(selectedPayment || {}, "paymentMethod") === "ERA" ? 0 : moneyNumber(draft?.adjustmentAmount ?? value(row, "adjustmentAmount")));
   }, 0);
   const reconciliation = buildReconciliationSnapshot({
     paymentAmount: headerValue("paymentAmount"),
@@ -2278,6 +2443,7 @@ function PaymentPostingWorkbench({
     refundAmount: headerValue("refundAmount"),
     incentiveAmount: headerValue("incentiveAmount"),
     otherAdjustments: headerValue("otherAdjustments"),
+    paymentMethod: value(selectedPayment || {}, "paymentMethod"),
     claimPayments: selectedLines.map((row) => {
       const draft = lineDrafts[value(row, "id")];
       return {
@@ -2287,24 +2453,56 @@ function PaymentPostingWorkbench({
     }),
   });
   const totalsMatch = reconciliation.balanced;
-  const isPaper = value(selectedPayment || {}, "paymentMethod") === "Paper EOB";
   const canEditHeader = selectedPayment && value(selectedPayment, "paymentStatus") !== "fully_posted";
   const selectedReconLogs = (data.reconciliationLogs || []).filter((row) => value(row, "paymentId") === selectedPaymentId).slice(0, 20);
 
   const openPayment = (paymentId: string) => {
     setSelectedPaymentId(paymentId);
+    setSelectedPaymentClaimId("");
     setSelectedClaimIds(new Set());
+    setClaimSearch("");
+    setClaimDosFrom("");
+    setClaimDosTo("");
     setLineDrafts({});
+    setServiceLineDrafts({});
     setHeaderDraft({});
     setBucket(value(entries.find((row) => value(row, "id") === paymentId) || {}, "paymentStatus") === "fully_posted" ? "submitted" : value(entries.find((row) => value(row, "id") === paymentId) || {}, "paymentStatus") === "error" ? "errors" : "pending");
   };
 
+  useEffect(() => {
+    if (paymentLinkHandled) return;
+    const requested = new URLSearchParams(window.location.search).get("paymentId");
+    if (!requested) { setPaymentLinkHandled(true); return; }
+    const entry = entries.find((row) => value(row, "id") === requested || value(row, "paymentNumber") === requested);
+    if (!entry) return;
+    setSelectedPaymentId(value(entry, "id"));
+    setPostingMonth("");
+    setBucket(value(entry, "paymentStatus") === "fully_posted" ? "submitted" : value(entry, "paymentStatus") === "error" ? "errors" : "pending");
+    setPaymentLookup(value(entry, "paymentNumber"));
+    setPaymentLinkHandled(true);
+  }, [entries, paymentLinkHandled]);
+
+  const findPaymentById = () => {
+    const lookup = paymentLookup.trim().toLowerCase();
+    const entry = entries.find((row) => value(row, "paymentNumber").toLowerCase() === lookup || value(row, "id").toLowerCase() === lookup);
+    if (!entry) { setPaymentLookupNotice("No payment found with that Payment ID."); return; }
+    setPaymentLookupNotice("");
+    setPostingMonth("");
+    setSearch("");
+    openPayment(value(entry, "id"));
+  };
+
   const payerClaims = selectedPayment
     ? data.claims.filter((row) => {
-      if (value(row, "payerId") !== value(selectedPayment, "payerId")) return false;
+      if (value(selectedPayment, "payerType") === "patient" ? value(row, "patientId") !== value(selectedPayment, "patientId") : value(row, "payerId") !== value(selectedPayment, "payerId")) return false;
       const outstanding = Math.max(0, moneyNumber(value(row, "totalCharge")) - moneyNumber(value(row, "totalPaid")) - moneyNumber(value(row, "totalAdjustment")));
       if (outstanding <= 0.009) return false;
       const already = selectedLines.some((line) => value(line, "claimId") === value(row, "id"));
+      const searchText = claimSearch.trim().toLowerCase();
+      if (searchText && !`${value(row, "id")} ${value(row, "claimNumber")} ${value(row, "patientName")} ${value(row, "dateOfService")}`.toLowerCase().includes(searchText)) return false;
+      const dos = value(row, "dateOfService").slice(0, 10);
+      if (claimDosFrom && dos < claimDosFrom) return false;
+      if (claimDosTo && dos > claimDosTo) return false;
       return !already;
     })
     : [];
@@ -2323,6 +2521,7 @@ function PaymentPostingWorkbench({
     const draft = lineDrafts[value(row, "id")];
     return draft?.[field] ?? value(row, field);
   };
+  const serviceLineValue = (row: DataRow, field: string) => serviceLineDrafts[value(row, "id")]?.[field] ?? value(row, field);
 
   const saveCorrections = async () => {
     if (!selectedPaymentId) return;
@@ -2338,46 +2537,79 @@ function PaymentPostingWorkbench({
       }));
     const header = canEditHeader ? {
       paymentAmount: headerValue("paymentAmount"),
+      paymentDate: headerValue("paymentDate"),
+      postingDate: headerValue("postingDate"),
       offsetAmount: headerValue("offsetAmount"),
       refundAmount: headerValue("refundAmount"),
       incentiveAmount: headerValue("incentiveAmount"),
       otherAdjustments: headerValue("otherAdjustments"),
     } : undefined;
-    if (await onFixLines(selectedPaymentId, lines, header)) {
+    const serviceLines = selectedServiceLines.filter((row) => value(row, "postingStatus") !== "posted").map((row) => ({
+      id: value(row, "id"),
+      allowedAmount: serviceLineValue(row, "allowedAmount"),
+      paidAmount: serviceLineValue(row, "paidAmount"),
+      adjustmentAmount: serviceLineValue(row, "adjustmentAmount"),
+      patientResponsibility: serviceLineValue(row, "patientResponsibility"),
+      denialCode: serviceLineValue(row, "denialCode"),
+      eobPage: serviceLineValue(row, "eobPage"),
+      nextAction: serviceLineValue(row, "nextAction"),
+    }));
+    if (await onFixLines(selectedPaymentId, lines, { ...(header || {}), serviceLines })) {
       setLineDrafts({});
+      setServiceLineDrafts({});
       setHeaderDraft({});
     }
   };
+
+  const paymentSortValue = (row: DataRow, key: string): string | number => {
+    const effective = moneyNumber(value(row, "paymentTotalEffective") || value(row, "paymentAmount"));
+    if (key === "source") return value(row, "paymentMethod").toUpperCase() === "ERA" ? "ERA" : "Manual";
+    if (key === "party") return value(row, "payerType") === "patient" ? value(row, "patientName") : value(row, "payerName");
+    if (key === "difference") return effective - moneyNumber(value(row, "claimPaidTotal"));
+    if (key === "paymentTotalEffective") return effective;
+    if (key === "error") return value(row, "errorMessage") || value(row, "autoPostResult");
+    if (["paymentAmount", "claimPaidTotal", "claimCount", "offsetAmount", "refundAmount", "incentiveAmount", "otherAdjustments"].includes(key)) return moneyNumber(value(row, key));
+    return value(row, key);
+  };
+  const sortedPayments = (rows: DataRow[]) => [...rows].sort((a, b) => {
+    const left = paymentSortValue(a, paymentSort.key);
+    const right = paymentSortValue(b, paymentSort.key);
+    const order = typeof left === "number" && typeof right === "number" ? left - right : String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+    return (paymentSort.direction === "asc" ? order : -order) || value(a, "id").localeCompare(value(b, "id"));
+  });
+  const paymentSortHeader = (label: string, key: string) => <th aria-sort={paymentSort.key === key ? paymentSort.direction === "asc" ? "ascending" : "descending" : "none"}><button className="payment-sort-header" type="button" onClick={() => setPaymentSort((current) => ({ key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc" }))}>{label}<span aria-hidden="true">{paymentSort.key === key ? paymentSort.direction === "asc" ? "↑" : "↓" : "↕"}</span></button></th>;
 
   const renderPaymentTable = (rows: DataRow[], mode: "pending" | "errors" | "submitted") => (
     <TablePanel
       description={mode === "submitted"
         ? "Fully posted payments only. Open a payment to see claim allocations and logs."
         : mode === "errors"
-          ? "Posted amounts do not match payment total. Correct claim lines or offsets, then Auto Post again."
-          : "Pending and partially posted payment entries. Allocate claims, then Auto Post when totals match."}
+          ? "Posted amounts do not match payment total. Correct the CPT lines or offsets, then retry posting."
+          : "Pending payments awaiting review and posting. Source identifies ERA and manual entries."}
       search={search}
       setSearch={setSearch}
-      title={mode === "submitted" ? "Submitted payments" : mode === "errors" ? "Payment errors" : "Pending posting"}
+      title={mode === "submitted" ? "Submitted payments" : mode === "errors" ? "Payment errors" : "Pending payments"}
     >
       <table>
         <thead>
           <tr>
-            <th>Payment ID</th><th>Payer</th><th>Payment</th>
-            {mode === "submitted" && <><th>Offset</th><th>Refund</th><th>Incentive</th><th>Other</th></>}
-            <th>Effective</th><th>Posted</th><th>Diff</th><th>Claims</th><th>Method</th><th>Status</th><th>Recon</th>
-            {mode !== "pending" && <th>Auto-post / error</th>}
+            {paymentSortHeader("Payment ID", "paymentNumber")}{paymentSortHeader("Date", "paymentDate")}{paymentSortHeader("Source", "source")}{paymentSortHeader("Payer", "party")}{paymentSortHeader("Payment", "paymentAmount")}
+            {mode === "submitted" && <>{paymentSortHeader("Offset", "offsetAmount")}{paymentSortHeader("Refund", "refundAmount")}{paymentSortHeader("Incentive", "incentiveAmount")}{paymentSortHeader("Other", "otherAdjustments")}</>}
+            {paymentSortHeader("Effective", "paymentTotalEffective")}{paymentSortHeader("Posted", "claimPaidTotal")}{paymentSortHeader("Diff", "difference")}{paymentSortHeader("Claims", "claimCount")}{paymentSortHeader("Method", "paymentMethod")}{paymentSortHeader("Status", "paymentStatus")}{paymentSortHeader("Recon", "reconciliationStatus")}
+            {mode !== "pending" && paymentSortHeader("Auto-post / error", "error")}
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {rows.length ? rows.map((row) => {
+          {rows.length ? sortedPayments(rows).map((row) => {
             const id = value(row, "id");
             const recon = value(row, "reconciliationStatus") || (mode === "submitted" ? "balanced" : "pending");
             return (
               <tr className={selectedPaymentId === id ? "is-selected" : undefined} key={id}>
-                <td><span className="mono">{value(row, "paymentNumber")}</span><small className="address">{shortDate(value(row, "paymentDate"))} · {value(row, "referenceNumber") || "No ref"}</small></td>
-                <td>{value(row, "payerName") || "—"}</td>
+                <td><span className="mono">{value(row, "paymentNumber")}</span><small className="address">{value(row, "referenceNumber") || "No ref"}</small></td>
+                <td>{shortDate(value(row, "paymentDate"))}</td>
+                <td><Status value={value(row, "paymentMethod").toUpperCase() === "ERA" ? "ERA" : "Manual"} /></td>
+                <td>{value(row, "payerType") === "patient" ? value(row, "patientName") || "Patient" : value(row, "payerName") || "—"}<small className="address">{value(row, "payerType") === "patient" ? `${value(row, "paymentPurpose") || "Patient payment"}${value(row, "serviceDate") ? ` · DOS ${shortDate(value(row, "serviceDate"))}` : " · No visit linked"}` : "Insurance payer"}</small></td>
                 <td>{currency(value(row, "paymentAmount"))}</td>
                 {mode === "submitted" && <>
                   <td>{currency(value(row, "offsetAmount") || "0.00")}</td>
@@ -2396,7 +2628,7 @@ function PaymentPostingWorkbench({
                 <td><div className="row-actions"><button onClick={() => openPayment(id)} type="button">Open</button></div></td>
               </tr>
             );
-          }) : <tr><td colSpan={mode === "submitted" ? 15 : mode === "pending" ? 11 : 12}>No payments in this view.</td></tr>}
+          }) : <tr><td colSpan={mode === "submitted" ? 19 : mode === "pending" ? 14 : 15}>No payments in this view.</td></tr>}
         </tbody>
       </table>
     </TablePanel>
@@ -2404,12 +2636,12 @@ function PaymentPostingWorkbench({
 
   return (
     <div className="payment-posting-workbench">
-      <SummaryCards cards={[
-        ["Pending", String(counts.pending), "Checks / EFT / ERA / EOB"],
-        ["Errors", String(counts.errors), "Totals need correction"],
-        ["Submitted", String(counts.submitted), "Fully posted"],
-        ["ERA", String(counts.era), "Unposted inbox"],
-      ]} />
+      <form className="claims-bucket-actions payment-detail-actions" onSubmit={(event) => { event.preventDefault(); findPaymentById(); }}>
+        <label className="field"><span>Find payment by Payment ID · all dates</span><input placeholder="Enter Payment ID" value={paymentLookup} onChange={(event) => setPaymentLookup(event.target.value)} /></label>
+        <button className="secondary-button" disabled={!paymentLookup.trim()} type="submit">Open payment</button>
+        {paymentLookupNotice && <span role="status">{paymentLookupNotice}</span>}
+      </form>
+      <div className="payment-posting-toolbar"><div><span className="eyebrow">Payment posting workspace</span><h2>ERA &amp; manual payments</h2><p>Review, correct, and post payer payments by claim and CPT line.</p></div><label className="field"><span>Posting month</span><input onChange={(event) => setPostingMonth(event.target.value)} type="month" value={postingMonth} /></label></div>
       <section className="claims-bucket-toolbar payment-bucket-toolbar">
         <nav aria-label="Payment posting workflow" className="claims-bucket-tabs payment-bucket-tabs">
           {([
@@ -2431,7 +2663,7 @@ function PaymentPostingWorkbench({
       {bucket === "era" && (() => {
         const openEras = data.remittances.filter((row) => {
           if (value(row, "status") === "posted") return false;
-          if (value(row, "processedStatus") === "processed" && value(row, "paymentEntryId")) return false;
+          if (!inPostingMonth(row)) return false;
           if (!query) return true;
           return `${value(row, "traceNumber")} ${value(row, "payerName")} ${value(row, "fileName")}`.toLowerCase().includes(query);
         });
@@ -2439,6 +2671,7 @@ function PaymentPostingWorkbench({
           <TablePanel title="ERA 835 inbox" description="Upload/import an 835, then Process to create a payment entry and claim lines." search={search} setSearch={setSearch}>
             <div className="claims-bucket-actions payment-detail-actions">
               <button className="secondary-button" onClick={onImportEra} type="button">Upload ERA</button>
+              {(() => { const source = data.remittances.find((row) => value(row, "fileName").toLowerCase().includes("oscar")) || data.remittances.find((row) => value(row, "id")); return source ? <><button className="secondary-button" disabled={isSaving} onClick={() => void onCreateEraDenialVariant(value(source, "id"))} type="button">Create denial test ERA</button><button className="secondary-button" disabled={isSaving} onClick={() => void onCreateEraZeroCheckVariant(value(source, "id"))} type="button">Create zero-check ERA</button></> : null; })()}
             </div>
             <table>
               <thead><tr><th>File / Trace</th><th>Payer</th><th>Received</th><th>Amount</th><th>Process</th><th>Actions</th></tr></thead>
@@ -2454,15 +2687,14 @@ function PaymentPostingWorkbench({
                       <td><Status value={processed || "pending"} /></td>
                       <td>
                         <div className="row-actions">
-                          {processed !== "processed" && (
-                            <button className="primary-button" disabled={isSaving} onClick={() => void onProcessEra(value(row, "id"))} type="button">Process ERA</button>
-                          )}
-                          {value(row, "paymentEntryId") && (
-                            <button onClick={() => openPayment(value(row, "paymentEntryId"))} type="button">Open payment</button>
-                          )}
-                          {!value(row, "paymentEntryId") && processed === "error" && (
-                            <button onClick={() => onCreateEntry(row)} type="button">Create manually</button>
-                          )}
+                          <button className="primary-button" disabled={isSaving} onClick={async () => {
+                            setSelectedEraId(value(row, "id"));
+                            setEraExceptionFilter("all");
+                            setSelectedEraClaimPaymentId("");
+                            setEraClaimDrafts({});
+                            setEraServiceDrafts({});
+                            if (!value(row, "paymentEntryId")) await onStartEra(value(row, "id"));
+                          }} type="button">Post</button>
                         </div>
                       </td>
                     </tr>
@@ -2470,6 +2702,48 @@ function PaymentPostingWorkbench({
                 }) : <tr><td colSpan={6}>No unprocessed ERA files. Upload an 835 to begin.</td></tr>}
               </tbody>
             </table>
+            {selectedEra && (
+              <section className="payment-detail-panel">
+                <TablePanel title={`ERA ${value(selectedEra, "traceNumber")}`} description={`${value(selectedEra, "payerName") || "Unmatched payer"} · ${currency(value(selectedEra, "amount"))} · ${value(selectedEra, "status")}`}>
+                  <div className="payment-compact-grid payment-header-amounts">
+                    <label className="field"><span>Payer</span><input disabled readOnly value={value(selectedEra, "payerName") || "Unmatched payer"} /></label>
+                    <label className="field"><span>Trace</span><input disabled readOnly value={value(selectedEra, "traceNumber")} /></label>
+                    <label className="field"><span>ERA/check date</span><input disabled readOnly value={value(selectedEra, "paymentDate")} /></label>
+                    <label className="field"><span>Posting date</span><input disabled readOnly value={value(selectedEra, "postingDate")} /></label>
+                    <label className="field"><span>Amount</span><input disabled readOnly value={value(selectedEra, "amount")} /></label>
+                  </div>
+                  {selectedEraPaymentId && <>
+                    <SummaryCards cards={[
+                      ["ERA claims", String(selectedEraClaims.length), "Matched claim allocations"],
+                      ["Posted", String(selectedEraPostedCount), "Successfully posted"],
+                      ["Exceptions", String(selectedEraExceptionRows.length), "Need review or correction"],
+                      ["Allocated paid", currency(selectedEraAllocatedPaid.toFixed(2)), `ERA total ${currency(value(selectedEra, "amount"))}`],
+                    ]} />
+                    <div className={`era-readiness-panel ${selectedEraReadyToPost ? "is-ready" : "has-errors"}`}>
+                      <div className="era-readiness-header"><strong>{selectedEraReadyToPost ? "Ready to post" : "Review required before posting"}</strong><span aria-label={selectedEraReadyToPost ? "All checks passed" : "One or more checks failed"} className="era-readiness-icon">{selectedEraReadyToPost ? "✓" : "!"}</span></div>
+                      <div className="era-readiness-checks">
+                        <span className={selectedEraUnmatched.length === 0 ? "check-pass" : "check-fail"}><b>{selectedEraUnmatched.length === 0 ? "✓" : "!"}</b> Claims matched{selectedEraUnmatched.length ? ` · ${selectedEraUnmatched.length} unmatched` : ""}</span>
+                        <span className={selectedEraBlockingRows.length === 0 ? "check-pass" : "check-fail"}><b>{selectedEraBlockingRows.length === 0 ? "✓" : "!"}</b> No blocking errors{selectedEraBlockingRows.length ? ` · ${selectedEraBlockingRows.length} to fix` : ""}</span>
+                        <span className={selectedEraAmountMatches ? "check-pass" : "check-fail"}><b>{selectedEraAmountMatches ? "✓" : "!"}</b> Amounts match{!selectedEraAmountMatches ? ` · allocated ${currency(selectedEraAllocatedPaid.toFixed(2))} of ${currency(value(selectedEra, "amount"))}` : ""}</span>
+                      </div>
+                    </div>
+                    <div className="claims-bucket-actions payment-detail-actions">
+                      <strong>Exception queue</strong>
+                      {([['all', 'All'], ['unmatched', 'Unmatched'], ['errors', 'Posting errors'], ['denials', 'Denials']] as const).map(([filter, label]) => <button className={eraExceptionFilter === filter ? "active" : "secondary-button"} key={filter} onClick={() => setEraExceptionFilter(filter)} type="button">{label}</button>)}
+                    </div>
+                    {selectedEraExceptionRows.length > 0 && <table className="era-exception-table"><thead><tr><th>Claim</th><th>Patient</th><th>DOS</th><th>Paid</th><th>Exception</th><th>Action</th></tr></thead><tbody>{selectedEraExceptionRows.map((row, index) => <tr key={`${row.claimNumber}-${index}`}><td className="mono">{row.claimNumber}</td><td>{row.patientName}</td><td>{shortDate(row.dateOfService)}</td><td>{currency(row.paidAmount)}</td><td><Status value={row.kind} /><small className="address">{row.reason}</small></td><td>{row.claimPaymentId ? <button className="link-button" onClick={() => { setSelectedEraClaimPaymentId(row.claimPaymentId); setEraClaimDrafts({}); setEraServiceDrafts({}); }} type="button">Review claim</button> : <span className="form-guidance">Map claim below</span>}</td></tr>)}</tbody></table>}
+                  </>}
+                  {!selectedEraPaymentId ? <p className="form-guidance">Start this ERA to create editable claim allocations. After starting, all associated CPT lines will appear here for review.</p> : <>
+                    {selectedEraUnmatched.length > 0 && <><h3>Unmatched ERA claims</h3><p className="form-guidance">These claims came from the uploaded 835 but did not match a local claim. They are shown for review and will not be replaced with unrelated payer claims.</p><table><thead><tr><th>ERA claim</th><th>Patient</th><th>DOS</th><th>Paid</th><th>Service lines</th><th>Reason</th></tr></thead><tbody>{selectedEraUnmatched.map((claim) => <tr key={String(claim.claimControlNumber)}><td className="mono">{String(claim.claimControlNumber || "—")}</td><td>{[claim.patientFirstName, claim.patientLastName].filter(Boolean).join(" ") || "—"}</td><td>{shortDate(String(claim.dateOfService || ""))}</td><td>{currency(String(claim.paidAmount || "0"))}</td><td>{Array.isArray(claim.serviceLines) ? claim.serviceLines.map((line) => String((line as Record<string, unknown>).procedureCode || "")).filter(Boolean).join(", ") || "—" : "—"}</td><td>{String(claim.reason || "Review")}</td></tr>)}</tbody></table></>}
+                    <div className="claims-bucket-actions payment-detail-actions"><button className="secondary-button" disabled={isSaving} onClick={() => void onSeedEraClaims(value(selectedEra, "id"))} type="button">Ensure demo patients &amp; coverage</button><button className="secondary-button" disabled={isSaving} onClick={() => void onCreateEraDenialVariant(value(selectedEra, "id"))} type="button">Create denial test copy</button><button className="secondary-button" disabled={isSaving} onClick={() => void onCreateEraZeroCheckVariant(value(selectedEra, "id"))} type="button">Create zero-check copy</button><span className="form-guidance">Testing only: adds demo addresses/coverage or creates separate denial/zero-check ERA files. The original file is preserved.</span></div>
+                    <table><thead><tr><th>Claim</th><th>Patient</th><th>DOS</th><th>CPT lines</th><th>Paid</th><th>Balance</th><th>Next action</th><th>Status</th></tr></thead><tbody>{selectedEraClaims.map((claim) => { const claimLines = selectedEraServiceLines.filter((line) => value(line, "claimPaymentId") === value(claim, "id")); const currentPaid = moneyNumber(value(claim, "paidAmount")); const currentAdjustment = moneyNumber(value(claim, "adjustmentAmount")); const claimBalance = moneyNumber(value(claim, "remainingBalance")) || moneyNumber(value(claim, "totalCharge")); const posted = value(claim, "postingStatus") === "posted"; const balance = Math.max(0, posted ? claimBalance : claimBalance - currentPaid - currentAdjustment); const action = value(claimLines[0] || {}, "nextAction") || (balance <= 0.009 ? "claim_closed" : "review"); return <tr key={value(claim, "id")}><td className="mono"><button className="link-button" onClick={() => { setSelectedEraClaimPaymentId(value(claim, "id")); setEraClaimDrafts({}); setEraServiceDrafts({}); }} type="button">{value(claim, "claimNumber")}</button></td><td>{value(claim, "patientName")}</td><td>{shortDate(value(claim, "dateOfService"))}</td><td>{claimLines.length || "—"}</td><td>{currency(value(claim, "paidAmount"))}</td><td className={balance > 0.009 ? "is-negative" : undefined}>{currency(balance.toFixed(2))}</td><td><Status value={action} /></td><td><Status value={balance <= 0.009 && !value(claim, "denialCode") ? "claim_closed" : value(claim, "postingStatus")} /></td></tr>; })}</tbody></table>
+                    {selectedEraClaim && <section className="payment-service-line-panel"><div className="claims-bucket-actions payment-detail-actions"><h3>Claim {value(selectedEraClaim, "claimNumber")} detail</h3><button className="secondary-button" onClick={() => setSelectedEraClaimPaymentId("")} type="button">Close claim</button></div><div className="payment-compact-grid"><label className="field"><span>Allowed</span><input onChange={(event) => setEraClaimDrafts((current) => ({ ...current, allowedAmount: event.target.value }))} value={eraClaimValue("allowedAmount")} /></label><label className="field"><span>Paid</span><input onChange={(event) => setEraClaimDrafts((current) => ({ ...current, paidAmount: event.target.value }))} value={eraClaimValue("paidAmount")} /></label><label className="field"><span>Adjustment</span><input onChange={(event) => setEraClaimDrafts((current) => ({ ...current, adjustmentAmount: event.target.value }))} value={eraClaimValue("adjustmentAmount")} /></label><label className="field"><span>Patient responsibility</span><input onChange={(event) => setEraClaimDrafts((current) => ({ ...current, patientResponsibility: event.target.value }))} value={eraClaimValue("patientResponsibility")} /></label><label className="field"><span>Adjustment / reason codes</span><input onChange={(event) => setEraClaimDrafts((current) => ({ ...current, denialCode: event.target.value }))} value={eraClaimValue("denialCode")} /><AdjustmentExplanation row={selectedEraClaim} /></label></div><table><thead><tr><th>CPT/HCPCS</th><th>DOS</th><th>Units</th><th>Charge</th><th>Allowed</th><th>Paid</th><th>Adjustment</th><th>Responsibility</th><th>Reason codes</th><th>EOB page</th><th>Next action</th></tr></thead><tbody>{selectedEraClaimLines.map((line) => <tr key={value(line, "id")}><td className="mono">{value(line, "procedureCode")}</td><td>{shortDate(value(line, "serviceDate"))}</td><td>{value(line, "units")}</td><td>{currency(value(line, "chargeAmount"))}</td><td><input onChange={(event) => setEraServiceDrafts((current) => ({ ...current, [value(line, "id")]: { ...(current[value(line, "id")] || {}), allowedAmount: event.target.value } }))} value={eraServiceValue(line, "allowedAmount")} /></td><td><input onChange={(event) => setEraServiceDrafts((current) => ({ ...current, [value(line, "id")]: { ...(current[value(line, "id")] || {}), paidAmount: event.target.value } }))} value={eraServiceValue(line, "paidAmount")} /></td><td><input onChange={(event) => setEraServiceDrafts((current) => ({ ...current, [value(line, "id")]: { ...(current[value(line, "id")] || {}), adjustmentAmount: event.target.value } }))} value={eraServiceValue(line, "adjustmentAmount")} /></td><td><input onChange={(event) => setEraServiceDrafts((current) => ({ ...current, [value(line, "id")]: { ...(current[value(line, "id")] || {}), patientResponsibility: event.target.value } }))} value={eraServiceValue(line, "patientResponsibility")} /></td><td><input onChange={(event) => setEraServiceDrafts((current) => ({ ...current, [value(line, "id")]: { ...(current[value(line, "id")] || {}), denialCode: event.target.value } }))} value={eraServiceValue(line, "denialCode")} /><AdjustmentExplanation row={line} /></td><td><input onChange={(event) => setEraServiceDrafts((current) => ({ ...current, [value(line, "id")]: { ...(current[value(line, "id")] || {}), eobPage: event.target.value } }))} value={eraServiceValue(line, "eobPage")} /></td><td><select onChange={(event) => setEraServiceDrafts((current) => ({ ...current, [value(line, "id")]: { ...(current[value(line, "id")] || {}), nextAction: event.target.value } }))} value={eraServiceValue(line, "nextAction")}><option value="">Select</option><option value="paid_close">Paid close</option><option value="bill_to_patient">Bill patient</option><option value="bill_to_secondary">Bill secondary</option><option value="bill_to_tertiary">Bill tertiary</option><option value="bill_to_guarantor">Bill guarantor</option><option value="write_off">Write off</option><option value="rebill">Rebill</option></select></td></tr>)}</tbody></table><button className="primary-button" disabled={isSaving} onClick={() => void saveEraClaim()} type="button">Save claim corrections</button></section>}
+                    {value(selectedEra, "status") !== "posted" && <div className="claims-bucket-actions payment-detail-actions"><button className="primary-button" disabled={isSaving || !selectedEraReadyToPost} onClick={() => void onProcessEra(value(selectedEra, "id"))} type="button">Post</button></div>}
+                  </>}
+                  <button className="secondary-button" onClick={() => setSelectedEraId("")} type="button">Close ERA</button>
+                </TablePanel>
+              </section>
+            )}
           </TablePanel>
         );
       })()}
@@ -2478,10 +2752,23 @@ function PaymentPostingWorkbench({
         <section className="payment-detail-panel">
           <TablePanel
             title={`Payment ${value(selectedPayment, "paymentNumber")}`}
-            description={`${value(selectedPayment, "payerName") || "Payer"} · Effective ${currency(String(effectiveTotal.toFixed(2)))} · Posted ${currency(String(totalClaimsPosted.toFixed(2)))} ${totalsMatch ? "· matched" : "· mismatch"}`}
+            description={`${value(selectedPayment, "payerType") === "patient" ? `Patient: ${value(selectedPayment, "patientName")}${value(selectedPayment, "serviceDate") ? ` · ${shortDate(value(selectedPayment, "serviceDate"))} · ${value(selectedPayment, "paymentPurpose")}` : ` · ${value(selectedPayment, "paymentPurpose") || "Unapplied"}`}` : `Insurance payer: ${value(selectedPayment, "payerName") || "Payer"}`} · ${isSelectedEraPayment ? "ERA allocation from the uploaded 835" : "Manual payment — claims are added only when selected"} · Effective ${currency(String(effectiveTotal.toFixed(2)))} · Posted ${currency(String(totalClaimsPosted.toFixed(2)))} ${totalsMatch ? "· matched" : "· mismatch"}`}
           >
+            <div className="payment-method-banner">
+              <strong>{isSelectedEraPayment ? "ERA payment" : "Manual payment"}</strong>
+              <span>{isSelectedEraPayment ? "Claims below came from the ERA matching step. Do not allocate unrelated open claims here." : selectedLines.length ? "Only claims selected for this batch are shown below." : "No claims selected yet. Search for a claim above and add it before posting."}</span>
+            </div>
             <div className="payment-compact-grid payment-header-amounts">
+              <label className="field"><span>Payment method</span><input readOnly value={value(selectedPayment, "paymentMethod")} /></label>
+              {(() => {
+                let details: Record<string, string> = {};
+                try { details = JSON.parse(value(selectedPayment, "methodDetails") || "{}"); } catch { /* Legacy entry without method details. */ }
+                const labels: Record<string, string> = { cardBrand: "Card brand", cardLast4: "Card last 4", authorizationCode: "Authorization", processor: "Processor / terminal", walletProvider: "Wallet", bankName: "Bank / issuer", otherMethod: "Other method" };
+                return Object.entries(labels).filter(([key]) => details[key]).map(([key, label]) => <label className="field" key={key}><span>{label}</span><input readOnly value={key === "cardLast4" ? `•••• ${details[key]}` : details[key]} /></label>);
+              })()}
               <label className="field"><span>Amount</span><input disabled={!canEditHeader || isSaving} onChange={(event) => setHeaderDraft((current) => ({ ...current, paymentAmount: event.target.value }))} type="number" value={headerValue("paymentAmount")} /></label>
+              <label className="field"><span>Check / ERA date</span><input disabled={!canEditHeader || isSaving} onChange={(event) => setHeaderDraft((current) => ({ ...current, paymentDate: event.target.value }))} type="date" value={headerValue("paymentDate")} /></label>
+              <label className="field"><span>Posting date</span><input disabled={!canEditHeader || isSaving} onChange={(event) => setHeaderDraft((current) => ({ ...current, postingDate: event.target.value }))} type="date" value={headerValue("postingDate")} /></label>
               <label className="field"><span>Offset</span><input disabled={!canEditHeader || isSaving} onChange={(event) => setHeaderDraft((current) => ({ ...current, offsetAmount: event.target.value }))} type="number" value={headerValue("offsetAmount") || "0.00"} /></label>
               <label className="field"><span>Refund</span><input disabled={!canEditHeader || isSaving} onChange={(event) => setHeaderDraft((current) => ({ ...current, refundAmount: event.target.value }))} type="number" value={headerValue("refundAmount") || "0.00"} /></label>
               <label className="field"><span>Incentive</span><input disabled={!canEditHeader || isSaving} onChange={(event) => setHeaderDraft((current) => ({ ...current, incentiveAmount: event.target.value }))} type="number" value={headerValue("incentiveAmount") || "0.00"} /></label>
@@ -2492,13 +2779,10 @@ function PaymentPostingWorkbench({
             </div>
             <div className={`payment-recon-banner ${totalsMatch ? "is-balanced" : "is-unbalanced"}`}>
               <Status value={reconciliation.reconciliationStatus} />
-              <span>{totalsMatch ? "Totals match. Auto Post is available." : "Payment total does not match posted amounts. Correct claim lines or offsets, then Recalculate."}</span>
+              <span>{totalsMatch ? `${isSelectedEraPayment ? "ERA" : "Payment"} totals match. Posting is available.` : "Payment total does not match posted amounts. Correct CPT lines or offsets, then Recalculate."}</span>
             </div>
             <div className="claims-bucket-actions payment-detail-actions">
-              <button className="secondary-button" disabled={isSaving} onClick={() => void onPopulate(selectedPaymentId)} type="button">
-                Populate claims
-              </button>
-              {payerClaims.length > 0 && (
+              {!isSelectedEraPayment && payerClaims.length > 0 && (
                 <button
                   className="secondary-button"
                   disabled={isSaving || !selectedClaimIds.size}
@@ -2525,17 +2809,23 @@ function PaymentPostingWorkbench({
               >
                 Recalculate
               </button>
-              {!isPaper && (
-                <button className="primary-button" disabled={isSaving || !selectedLines.length || !totalsMatch} onClick={() => onAutoPost(selectedPaymentId)} type="button">
-                  Auto Post
-                </button>
-              )}
+              <button className="primary-button" disabled={isSaving || !selectedLines.length || !totalsMatch} onClick={() => onAutoPost(selectedPaymentId)} type="button">
+                {isSelectedEraPayment ? "Post entire ERA" : "Post payment"}
+              </button>
               <button className="secondary-button" onClick={() => setSelectedPaymentId("")} type="button">Close</button>
             </div>
             {value(selectedPayment, "errorMessage") && (
               <p className="form-guidance" style={{ color: "var(--danger, #b42318)" }}>{value(selectedPayment, "errorMessage")}</p>
             )}
-            {payerClaims.length > 0 && value(selectedPayment, "paymentStatus") !== "fully_posted" && (
+            {!isSelectedEraPayment && value(selectedPayment, "paymentStatus") !== "fully_posted" && (
+              <>
+                <div className="payment-claim-search">
+                  <label className="field"><span>Claim ID / patient name</span><input onChange={(event) => setClaimSearch(event.target.value)} placeholder="Search claim number or patient" value={claimSearch} /></label>
+                  <label className="field"><span>DOS from</span><input type="date" value={claimDosFrom} onChange={(event) => setClaimDosFrom(event.target.value)} /></label>
+                  <label className="field"><span>DOS to</span><input type="date" min={claimDosFrom || undefined} value={claimDosTo} onChange={(event) => setClaimDosTo(event.target.value)} /></label>
+                  <button className="secondary-button" type="button" onClick={() => { setClaimSearch(""); setClaimDosFrom(""); setClaimDosTo(""); }}>Clear filters</button>
+                </div>
+                <p className="form-guidance">{value(selectedPayment, "payerType") === "patient" ? "Only this patient's open claims are shown. Select a claim and review its CPT lines before applying the payment." : "Select an open claim for this payer, then review its CPT lines."}</p>
               <table style={{ marginBottom: 16 }}>
                 <thead><tr><th /><th>Open claim</th><th>DOS</th><th>Charge</th><th>Outstanding</th></tr></thead>
                 <tbody>
@@ -2556,56 +2846,36 @@ function PaymentPostingWorkbench({
                       </tr>
                     );
                   })}
+                  {!payerClaims.length && <tr><td colSpan={5}>No unallocated open claims match. Clear the filters or check the selected patient and DOS.</td></tr>}
                 </tbody>
-              </table>
+              </table></>
             )}
             <table>
-              <thead>
-                <tr>
-                  <th>Claim</th><th>Allowed</th><th>Paid</th><th>Adjustment</th><th>Patient resp.</th><th>Denial</th><th>Status</th><th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selectedLines.length ? selectedLines.map((row) => {
-                  const lineId = value(row, "id");
-                  const posted = value(row, "postingStatus") === "posted";
-                  const mismatched = !totalsMatch || value(row, "postingStatus") === "error";
-                  return (
-                    <tr className={mismatched && !posted ? "is-selected" : undefined} key={lineId}>
-                      <td><span className="mono">{value(row, "claimNumber")}</span><small className="address">{value(row, "patientName")} · {shortDate(value(row, "dateOfService"))}</small></td>
-                      <td>{posted ? currency(value(row, "allowedAmount")) : <input disabled={isSaving} onChange={(event) => updateLineDraft(lineId, "allowedAmount", event.target.value)} type="number" value={lineValue(row, "allowedAmount")} />}</td>
-                      <td>{posted ? currency(value(row, "paidAmount")) : <input disabled={isSaving} onChange={(event) => updateLineDraft(lineId, "paidAmount", event.target.value)} type="number" value={lineValue(row, "paidAmount")} />}</td>
-                      <td>{posted ? currency(value(row, "adjustmentAmount")) : <input disabled={isSaving} onChange={(event) => updateLineDraft(lineId, "adjustmentAmount", event.target.value)} type="number" value={lineValue(row, "adjustmentAmount")} />}</td>
-                      <td>{posted ? currency(value(row, "patientResponsibility")) : <input disabled={isSaving} onChange={(event) => updateLineDraft(lineId, "patientResponsibility", event.target.value)} type="number" value={lineValue(row, "patientResponsibility")} />}</td>
-                      <td>{posted ? (value(row, "denialCode") || "—") : <input disabled={isSaving} onChange={(event) => updateLineDraft(lineId, "denialCode", event.target.value)} value={lineValue(row, "denialCode")} />}</td>
-                      <td><Status value={value(row, "postingStatus")} />{value(row, "errorMessage") && <small className="address">{value(row, "errorMessage")}</small>}</td>
-                      <td>
-                        <div className="row-actions">
-                          {isPaper && !posted && (
-                            <button
-                              className="primary-button"
-                              disabled={isSaving}
-                              onClick={() => void onManualPost({
-                                id: selectedPaymentId,
-                                claimPaymentId: lineId,
-                                allowedAmount: lineValue(row, "allowedAmount"),
-                                paidAmount: lineValue(row, "paidAmount"),
-                                adjustmentAmount: lineValue(row, "adjustmentAmount"),
-                                patientResponsibility: lineValue(row, "patientResponsibility"),
-                                denialCode: lineValue(row, "denialCode"),
-                              })}
-                              type="button"
-                            >
-                              Manual post
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                }) : <tr><td colSpan={8}>No claim lines yet. Populate payer claims to begin allocation.</td></tr>}
-              </tbody>
+              <thead><tr><th>Claim</th><th>Patient</th><th>DOS</th><th>Charge</th><th>Paid</th><th>Balance</th><th>Next action</th><th>Status</th></tr></thead>
+              <tbody>{selectedLines.length ? selectedLines.map((row) => {
+                const lineId = value(row, "id");
+                const balance = Math.max(0, moneyNumber(value(row, "remainingBalance")) || moneyNumber(value(row, "allowedAmount")) - moneyNumber(value(row, "paidAmount")) - moneyNumber(value(row, "adjustmentAmount")));
+                const claimLines = selectedServiceLines.filter((line) => value(line, "claimPaymentId") === lineId);
+                const action = value(claimLines[0] || {}, "nextAction") || (balance <= 0.009 ? "paid_close" : "review");
+                const hasError = value(row, "postingStatus") === "error" || claimLines.some((line) => value(line, "postingStatus") === "error" || value(line, "errorMessage"));
+                return <tr className={hasError ? "is-selected" : undefined} key={lineId}><td><button className="link-button mono" onClick={() => { setSelectedPaymentClaimId(lineId); setLineDrafts({}); setServiceLineDrafts({}); }} type="button">{value(row, "claimNumber")}</button></td><td>{value(row, "patientName") || "—"}</td><td>{shortDate(value(row, "dateOfService"))}</td><td>{currency(value(row, "allowedAmount") || value(row, "totalCharge"))}</td><td>{currency(value(row, "paidAmount"))}</td><td className={balance > 0.009 ? "is-negative" : undefined}>{currency(balance.toFixed(2))}</td><td><Status value={action} /></td><td><Status value={hasError ? "error" : value(row, "postingStatus")} /></td></tr>;
+              }) : <tr><td colSpan={8}>No claim lines yet. Search and add a claim to begin posting.</td></tr>}</tbody>
             </table>
+            {selectedPaymentClaim && (
+              <div className="payment-service-line-panel">
+                <div className="claims-bucket-actions payment-detail-actions"><h3>Claim {value(selectedPaymentClaim, "claimNumber")} CPT details</h3><button className="secondary-button" onClick={() => setSelectedPaymentClaimId("")} type="button">Close claim</button></div>
+                <p className="form-guidance">Edit payment and EOB fields at CPT level. The claim total is recalculated from these lines.</p>
+                <table>
+                  <thead><tr><th>CPT/HCPCS</th><th>DOS</th><th>Units</th><th>Charge</th><th>Allowed</th><th>Paid</th><th>Adjustment</th><th>Patient responsibility</th><th>CARC/RARC</th><th>EOB page</th><th>Next action</th><th>Status</th></tr></thead>
+                  <tbody>{selectedPaymentClaimLines.map((row) => (
+                    <tr key={value(row, "id")}>
+                      <td className="mono">{value(row, "procedureCode")}</td><td>{shortDate(value(row, "serviceDate"))}</td><td>{value(row, "units")}</td><td>{currency(value(row, "chargeAmount"))}</td><td>{value(row, "postingStatus") === "posted" ? currency(value(row, "allowedAmount")) : <input disabled={isSaving} onChange={(event) => setServiceLineDrafts((current) => ({ ...current, [value(row, "id")]: { ...(current[value(row, "id")] || {}), allowedAmount: event.target.value } }))} type="number" value={serviceLineValue(row, "allowedAmount")} />}</td><td>{value(row, "postingStatus") === "posted" ? currency(value(row, "paidAmount")) : <input disabled={isSaving} onChange={(event) => setServiceLineDrafts((current) => ({ ...current, [value(row, "id")]: { ...(current[value(row, "id")] || {}), paidAmount: event.target.value } }))} type="number" value={serviceLineValue(row, "paidAmount")} />}</td><td>{value(row, "postingStatus") === "posted" ? currency(value(row, "adjustmentAmount")) : <input disabled={isSaving} onChange={(event) => setServiceLineDrafts((current) => ({ ...current, [value(row, "id")]: { ...(current[value(row, "id")] || {}), adjustmentAmount: event.target.value } }))} type="number" value={serviceLineValue(row, "adjustmentAmount")} />}</td><td>{value(row, "postingStatus") === "posted" ? currency(value(row, "patientResponsibility")) : <input disabled={isSaving} onChange={(event) => setServiceLineDrafts((current) => ({ ...current, [value(row, "id")]: { ...(current[value(row, "id")] || {}), patientResponsibility: event.target.value } }))} type="number" value={serviceLineValue(row, "patientResponsibility")} />}</td><td>{value(row, "postingStatus") === "posted" ? (value(row, "denialCode") || "—") : <input disabled={isSaving} onChange={(event) => setServiceLineDrafts((current) => ({ ...current, [value(row, "id")]: { ...(current[value(row, "id")] || {}), denialCode: event.target.value } }))} value={serviceLineValue(row, "denialCode")} />}<AdjustmentExplanation row={row} /></td><td>{value(row, "postingStatus") === "posted" ? (value(row, "eobPage") || "—") : <input disabled={isSaving} onChange={(event) => setServiceLineDrafts((current) => ({ ...current, [value(row, "id")]: { ...(current[value(row, "id")] || {}), eobPage: event.target.value } }))} placeholder="e.g. 1-2" value={serviceLineValue(row, "eobPage")} />}</td><td>{value(row, "postingStatus") === "posted" ? (value(row, "nextAction") || "—") : <select disabled={isSaving} onChange={(event) => setServiceLineDrafts((current) => ({ ...current, [value(row, "id")]: { ...(current[value(row, "id")] || {}), nextAction: event.target.value } }))} value={serviceLineValue(row, "nextAction")}><option value="">Select</option><option value="paid_close">Paid close</option><option value="bill_to_patient">Bill patient</option><option value="bill_to_secondary">Bill secondary</option><option value="bill_to_tertiary">Bill tertiary</option><option value="bill_to_guarantor">Bill guarantor</option><option value="write_off">Write off</option><option value="rebill">Rebill</option></select>}</td><td><Status value={value(row, "postingStatus")} /></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+                {selectedPaymentClaimLines.length === 0 && <p className="form-guidance">No CPT lines are linked to this claim yet.</p>}
+              </div>
+            )}
             {selectedLogs.length > 0 && (
               <div className="payment-logs">
                 <span>Posting logs</span>
@@ -2796,6 +3066,7 @@ function ClaimCorrectionEditor({
   const previouslySubmitted = Boolean(value(claim, "firstBilledDate") || value(claim, "clearinghouseTrace") || ["submitted", "accepted", "rejected", "denied"].includes(value(claim, "status")));
   const lifecycle = deriveClaimLifecycle(claim);
   const payer = data.payers.find((row) => value(row, "id") === value(claim, "payerId"));
+  const plan = data.plans.find((row) => value(row, "id") === value(coverage, "planId"));
   const responseDays = payerResponseDays(payer);
   const ageDays = claimAgeDays(claim);
   const denialCodes = (data.claimPayments || [])
@@ -2815,6 +3086,7 @@ function ClaimCorrectionEditor({
     followUpStatus: value(claim, "followUpStatus"),
   });
   const [section, setSection] = useState("form");
+  const [noteDraft, setNoteDraft] = useState("");
   const [draft, setDraft] = useState<Record<string, string>>(() => ({
     id: claimId,
     coverageId: billed.primaryId || value(claim, "coverageId"),
@@ -2888,7 +3160,11 @@ function ClaimCorrectionEditor({
   }));
   const [lines, setLines] = useState<ClaimEditorLine[]>(() => data.claimLines
     .filter((row) => value(row, "claimId") === claimId)
-    .map((row) => Object.fromEntries(Object.entries(row).map(([key, item]) => [key, item === null || item === undefined ? "" : String(item)]))));
+    .map((row) => {
+      const line = Object.fromEntries(Object.entries(row).map(([key, item]) => [key, item === null || item === undefined ? "" : String(item)]));
+      if (!line.renderingOtherId && line.renderingOtherIdQualifier === "ZZ") line.renderingOtherId = value(provider, "taxonomyCode");
+      return line;
+    }));
   const correctionHistory = data.claimCorrections.filter((row) => value(row, "claimId") === claimId);
   const blocking = issues.filter((issue) => value(issue, "severity") === "error");
   const update = (name: string, next: string) => setDraft((current) => ({ ...current, [name]: next }));
@@ -2914,8 +3190,15 @@ function ClaimCorrectionEditor({
     const result = await onSave({ ...draft, id: claimId, lines, followUpSave: mode === "followup" }, rescrub);
     if (result && rescrub && result.status === "clean") setSection("review");
   };
+  const saveClaimNote = async () => {
+    if (!onFollowUpAction || !noteDraft.trim()) return;
+    const result = await onFollowUpAction("addClaimNote", { id: claimId, note: noteDraft.trim() });
+    if (result) setNoteDraft("");
+  };
+  const claimPaymentsForEditor = (data.claimPayments || []).filter((row) => value(row, "claimId") === claimId);
+  const denialLineActivity = (data.claimPaymentServiceLines || []).filter((row) => claimPaymentsForEditor.some((payment) => value(payment, "id") === value(row, "claimPaymentId")) && value(row, "denialCode"));
   const focusCmsBox = (rawBox: string) => {
-    setSection("form");
+    setSection(mode === "followup" ? "edit" : "form");
     window.setTimeout(() => {
       const normalized = rawBox.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
       const numeric = rawBox.match(/^\d+/)?.[0] || rawBox.match(/\d+/)?.[0] || "";
@@ -2934,26 +3217,23 @@ function ClaimCorrectionEditor({
 
   return createPortal(
     <div className="claim-editor-backdrop" role="presentation">
-      <section aria-labelledby="claim-editor-title" aria-modal="true" className="claim-editor" role="dialog">
+      <section aria-labelledby="claim-editor-title" aria-modal="true" className={`claim-editor ${mode === "followup" ? "collection-claim-editor" : ""}`} role="dialog">
         <header className="claim-editor-header">
-          <div><span className="eyebrow">{mode === "followup" ? "Collection Arena · claim follow-up" : "CMS-1500 correction workspace"}</span><h2 id="claim-editor-title">{value(claim, "claimNumber")} · {value(claim, "patientName")}</h2><p>DOS {shortDate(draft.dateOfService)} · {value(claim, "payerName") || "Self pay"} · {currency(value(claim, "totalCharge"))}{mode === "followup" ? ` · ${CLAIM_LIFECYCLE_LABELS[lifecycle]}` : ""}</p></div>
+          <div className="claim-editor-heading-copy"><span className="eyebrow">{mode === "followup" ? "Collection Arena · claim follow-up" : "CMS-1500 correction workspace"}</span><h2 id="claim-editor-title">{value(claim, "claimNumber")} <span>· {value(claim, "patientName")}</span></h2><p>DOS {shortDate(draft.dateOfService)} · {value(claim, "payerName") || "Self pay"} · Charge {currency(value(claim, "totalCharge"))}{mode === "followup" ? ` · ${CLAIM_LIFECYCLE_LABELS[lifecycle]}` : ""}</p></div>
           <div className="claim-editor-header-status"><Status value={value(claim, "workflowStatus") || deriveWorkflowStatus(claim)} /><Status value={value(claim, "scrubResult") || value(claim, "scrubberStatus")} /><button aria-label="Close claim editor" onClick={onClose} type="button">×</button></div>
         </header>
-        {mode === "followup" && <div className="claim-followup-banner">
-          <article><span>Wait</span><strong>{ageDays}d / {responseDays}d</strong></article>
-          <article><span>Follow-up</span><strong>{FOLLOW_UP_LABELS[value(claim, "followUpStatus")] || "Due"}</strong></article>
-          <article><span>Unpaid reason</span><strong>{followUpReason}</strong></article>
-          <article><span>Balance</span><strong>{currency(value(claim, "remainingBalance"))}</strong></article>
-        </div>}
         <div className="claim-editor-layout">
           <aside className="claim-editor-rail">
             <nav aria-label="Claim form sections">
-              {[["form", "CMS-1500 claim form"], ["review", "Review & history"]].map(([key, label]) => <button className={section === key ? "active" : ""} key={key} onClick={() => setSection(key)} type="button"><span>{label}</span>{key === "review" && blocking.length ? <b>{blocking.length}</b> : null}</button>)}
+              {[["form", mode === "followup" ? "Claim details" : "CMS-1500 claim form"], ["review", "Review & history"], ...(mode === "followup" ? [["notes", "Notes"], ["activity", "Activity"]] : [])].map(([key, label]) => <button className={section === key ? "active" : ""} key={key} onClick={() => setSection(key)} type="button"><span>{label}</span>{key === "review" && blocking.length ? <b>{blocking.length}</b> : null}{key === "activity" && denialLineActivity.length ? <b>{denialLineActivity.length}</b> : null}</button>)}
+              {mode === "followup" && <button className={section === "edit" ? "active" : ""} onClick={() => setSection("edit")} type="button"><span>Edit claim</span></button>}
             </nav>
             <div className="claim-editor-findings"><strong>{blocking.length ? `${blocking.length} blocking finding${blocking.length === 1 ? "" : "s"}` : "No blocking findings"}</strong>{issues.slice(0, 8).map((issue, index) => <button className={value(issue, "severity") === "error" ? "is-error" : "is-warning"} key={`${value(issue, "box")}-${index}`} onClick={() => focusCmsBox(value(issue, "box"))} type="button"><span>{scrubFindingLabel(issue)}</span>{value(issue, "message")}</button>)}</div>
           </aside>
           <main className="claim-editor-main">
-            {section === "form" && <>
+            {section === "form" && mode === "followup" && <ClaimArenaClaimOverview data={data} claim={claim} patient={patient} payer={payer || {}} plan={plan || {}} coverage={coverage} lines={lines} payments={claimPaymentsForEditor} followUpStatus={value(claim, "followUpStatus")} followUpReason={followUpReason} nextAction={followUpActions[0]?.label || "Claim closed"} ageDays={ageDays} responseDays={responseDays} onEdit={() => setSection("edit")} />}
+            {((section === "form" && mode !== "followup") || (section === "edit" && mode === "followup")) && <>
+              {mode === "followup" && <button className="arena-back-button" onClick={() => setSection("form")} type="button">← Claim details</button>}
               {mode === "followup" && <ClaimFollowUpInsurancePanel
                 data={data}
                 dos={draft.dateOfService || value(claim, "dateOfService")}
@@ -2986,6 +3266,19 @@ function ClaimCorrectionEditor({
                   </ol>
                 ) : <p>No workflow events recorded yet.</p>}
               </div>
+            </ClaimEditorSection>}
+            {section === "notes" && mode === "followup" && <ClaimEditorSection description="Internal notes stay with this claim and are recorded in the audit trail." title="Claim notes">
+              <label className="claim-editor-diagnoses"><span>Add a note</span><textarea onChange={(event) => setNoteDraft(event.target.value)} placeholder="Document payer calls, patient contact, correction details, or next steps" value={noteDraft} /></label>
+              <button className="primary-button" disabled={isSaving || !noteDraft.trim()} onClick={() => void saveClaimNote()} type="button">Save note</button>
+              <div className="claim-workflow-history">
+                <strong>Saved notes</strong>
+                {workflowEvents.filter((event) => value(event, "action") === "NOTE").length ? <ol>{workflowEvents.filter((event) => value(event, "action") === "NOTE").map((event) => <li key={value(event, "id")}><span>{shortDate(value(event, "createdAt"), true)}</span><strong>Note</strong><small>{value(event, "actorName")}{value(event, "reason") ? ` · ${value(event, "reason")}` : ""}</small></li>)}</ol> : <p>No notes recorded yet.</p>}
+              </div>
+            </ClaimEditorSection>}
+            {section === "activity" && mode === "followup" && <ClaimEditorSection description="CPT-level denial and payment activity explains what remains unpaid and what should happen next." title="Denial & claim activity">
+              <div className="claim-review-summary"><article><span>Denial lines</span><strong>{denialLineActivity.length}</strong></article><article><span>Payment records</span><strong>{claimPaymentsForEditor.length}</strong></article><article><span>Claim balance</span><strong>{currency(value(claim, "remainingBalance"))}</strong></article><article><span>Next action</span><strong>{followUpActions[0]?.label || "Claim closed"}</strong></article></div>
+              {denialLineActivity.length ? <div className="claim-activity-table"><table><thead><tr><th>CPT</th><th>DOS</th><th>Denial</th><th>Charge</th><th>Paid</th><th>Adjustment</th><th>Next action</th></tr></thead><tbody>{denialLineActivity.map((line, index) => <tr key={value(line, "id") || index}><td>{value(line, "procedureCode") || value(line, "cptCode") || "—"}</td><td>{shortDate(value(line, "serviceDate") || value(line, "dateOfService") || value(claim, "dateOfService"))}</td><td><strong className="claim-denial-code">{value(line, "denialCode")}</strong></td><td>{currency(value(line, "chargeAmount"))}</td><td>{currency(value(line, "paidAmount"))}</td><td>{currency(value(line, "adjustmentAmount"))}</td><td>{value(line, "nextAction") || followUpActions[0]?.label || "Review"}</td></tr>)}</tbody></table></div> : <p className="claim-empty-state">No CPT-level denial lines are linked to this claim.</p>}
+              <div className="claim-workflow-history"><strong>Recent activity</strong>{workflowEvents.length ? <ol>{workflowEvents.map((event) => <li key={value(event, "id")}><span>{shortDate(value(event, "createdAt"), true)}</span><strong>{value(event, "action")}</strong><em>{value(event, "previousStatus") || "—"} → {value(event, "newStatus") || "—"}</em><small>{value(event, "actorName")}{value(event, "reason") ? ` · ${value(event, "reason")}` : ""}</small></li>)}</ol> : <p>No activity recorded yet.</p>}</div>
             </ClaimEditorSection>}
           </main>
         </div>
@@ -3067,6 +3360,8 @@ function Cms1500DiagnosisServiceForm({
     chargeAmount: "0.00",
     placeOfService: "11",
     renderingNpi: "",
+    renderingOtherIdQualifier: "",
+    renderingOtherId: "",
     emergencyIndicator: "",
     epsdtReasonCode: "",
     serviceDateFrom: draft.dateOfService,
@@ -3137,7 +3432,7 @@ function Cms1500DiagnosisServiceForm({
         </div>
         <section className="cms1500-box cms1500-box-24" id="cms-box-24">
           <div className="cms1500-service-header">
-            <span className="line">24.</span><span className="dates">A. DATE(S) OF SERVICE<small>From / To</small></span><span>B. PLACE<br />OF SERVICE</span><span>C.<br />EMG</span><span className="procedure">D. PROCEDURES, SERVICES, OR SUPPLIES<small>CPT/HCPCS · MODIFIERS</small></span><span>E. DIAGNOSIS<br />POINTER</span><span>F. $ CHARGES</span><span>G. DAYS<br />OR UNITS</span><span>H.<br />EPSDT</span><span>I.<br />ID QUAL</span><span>J. RENDERING<br />PROVIDER NPI</span><span />
+            <span className="line">24.</span><span className="dates">A. DATE(S) OF SERVICE<small>From / To</small></span><span>B. PLACE<br />OF SERVICE</span><span>C.<br />EMG</span><span className="procedure">D. PROCEDURES, SERVICES, OR SUPPLIES<small>CPT/HCPCS · MODIFIERS</small></span><span>E. DIAGNOSIS<br />POINTER</span><span>F. $ CHARGES</span><span>G. DAYS<br />OR UNITS</span><span>H.<br />EPSDT</span><span>I.<br />ID QUAL</span><span>J. RENDERING<br />PROVIDER NPI / OTHER ID</span><span />
           </div>
           {paperRows.map((line, index) => line ? <div className="cms1500-service-row" key={line.id || `paper-${index}`}>
             <b className="line-number">{index + 1}</b>
@@ -3150,7 +3445,7 @@ function Cms1500DiagnosisServiceForm({
             <input aria-label={`Line ${index + 1} units`} min="0" onChange={(event) => updateLine(index, "units", event.target.value)} type="number" value={line.units || "1"} />
             <select aria-label={`Line ${index + 1} EPSDT reason`} onChange={(event) => updateLine(index, "epsdtReasonCode", event.target.value)} title={epsdtReasons.find(([code]) => code === line.epsdtReasonCode)?.[1] || "EPSDT reason"} value={line.epsdtReasonCode || ""}><option value="">—</option>{epsdtReasons.map(([code]) => <option key={code} value={code}>{code}</option>)}</select>
             <select aria-label={`Line ${index + 1} rendering identifier qualifier`} onChange={(event) => updateLine(index, "renderingOtherIdQualifier", event.target.value)} title={renderingIdQualifiers.find(([code]) => code === line.renderingOtherIdQualifier)?.[1] || "Rendering identifier qualifier"} value={line.renderingOtherIdQualifier || ""}><option value="">—</option>{renderingIdQualifiers.map(([code]) => <option key={code} value={code}>{code}</option>)}</select>
-            <input aria-label={`Line ${index + 1} rendering NPI`} maxLength={10} onChange={(event) => updateLine(index, "renderingNpi", event.target.value.replace(/\D/g, "").slice(0, 10))} value={line.renderingNpi || ""} />
+            <div className="cms1500-rendering-id"><input aria-label={`Line ${index + 1} rendering NPI`} maxLength={10} onChange={(event) => updateLine(index, "renderingNpi", event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="NPI" value={line.renderingNpi || ""} /><input aria-label={`Line ${index + 1} rendering other ID or taxonomy`} maxLength={20} onChange={(event) => updateLine(index, "renderingOtherId", event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder={line.renderingOtherIdQualifier === "ZZ" ? "Taxonomy" : "Other ID"} value={line.renderingOtherId || (line.renderingOtherIdQualifier === "ZZ" ? value(provider, "taxonomyCode") : "")} /></div>
             <button aria-label={`Remove service line ${index + 1}`} className="cms1500-remove-line" disabled={lines.length === 1} onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))} type="button">×</button>
           </div> : <button className="cms1500-empty-row" key={`empty-${index}`} onClick={addLine} type="button"><b>{index + 1}</b><span>+ Add service line</span></button>)}
         </section>
@@ -3178,6 +3473,50 @@ function Cms1500DiagnosisServiceForm({
 function Cms1500PaperBox({ box, label, children }: { box: string; label: string; children: ReactNode }) {
   const normalizedBox = box.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   return <section className={`cms1500-paper-field cms1500-paper-field-${box.replace(/[^a-z0-9]/gi, "-")}`} id={`cms-box-${normalizedBox}`}><header><strong>{box}.</strong><span>{label}</span></header><div className="cms1500-paper-field-body">{children}</div></section>;
+}
+
+function ClaimArenaClaimOverview({
+  data, claim, patient, payer, plan, coverage, lines, payments, followUpStatus, followUpReason, nextAction, ageDays, responseDays, onEdit,
+}: {
+  data: WorkspaceData;
+  claim: DataRow;
+  patient: DataRow;
+  payer: DataRow;
+  plan: DataRow;
+  coverage: DataRow;
+  lines: ClaimEditorLine[];
+  payments: DataRow[];
+  followUpStatus: string;
+  followUpReason: string;
+  nextAction: string;
+  ageDays: number;
+  responseDays: number;
+  onEdit: () => void;
+}) {
+  const paid = payments.filter((payment) => value(payment, "postingStatus") === "posted").reduce((sum, payment) => sum + Number(value(payment, "paidAmount")), 0);
+  const provider = data.providers.find((item) => value(item, "id") === value(claim, "providerId")) || {};
+  return <ClaimEditorSection description="Review the account at a glance. Use Edit claim only when you need to make a correction." title="Claim overview">
+    <div className="arena-claim-metrics">
+      <article><span>Open balance</span><strong>{currency(value(claim, "remainingBalance"))}</strong></article>
+      <article><span>Total charge</span><strong>{currency(value(claim, "totalCharge"))}</strong></article>
+      <article><span>Payments posted</span><strong>{currency(paid)}</strong></article>
+      <article><span>Response window</span><strong>{ageDays}d <small>/ {responseDays}d</small></strong></article>
+    </div>
+    <div className="arena-claim-overview-grid">
+      <section><span className="eyebrow">Patient</span><h4>{[value(patient, "firstName"), value(patient, "middleName"), value(patient, "lastName")].filter(Boolean).join(" ") || value(claim, "patientName")}</h4><p>Patient ID · {value(patient, "accountNumber") || value(patient, "id") || "—"}</p><p>Date of birth · {shortDate(value(patient, "dateOfBirth"))}</p></section>
+      <section><span className="eyebrow">Billed insurance</span><h4>{value(payer, "name") || "Self pay"}</h4><p>{value(plan, "name") || "Plan not listed"}</p><p>Member ID · {value(coverage, "memberId") || "—"}</p></section>
+      <section><span className="eyebrow">Follow-up status</span><h4>{FOLLOW_UP_LABELS[followUpStatus] || "Due"}</h4><p>{followUpReason}</p><p>Suggested next action · {nextAction}</p></section>
+    </div>
+    <section className="arena-service-lines">
+      <div className="arena-section-heading"><div><span className="eyebrow">Billed services</span><h4>Claim lines</h4></div><button className="secondary-button" onClick={onEdit} type="button">Edit claim</button></div>
+      <div className="table-wrap"><table><thead><tr><th>CPT / HCPCS</th><th>Service date</th><th>Units</th><th>Charge</th><th>Rendering provider</th></tr></thead><tbody>
+        {lines.length ? lines.map((line, index) => {
+          const procedure = data.procedureCodes.find((item) => value(item, "code") === String(line.procedureCode || ""));
+          return <tr key={String(line.id || index)}><td><strong>{String(line.procedureCode || "—")}</strong><small className="address">{value(procedure || {}, "description")}</small></td><td>{shortDate(line.serviceDateFrom || value(claim, "dateOfService"))}</td><td>{String(line.units || "1")}</td><td>{currency(line.chargeAmount)}</td><td>{[value(provider, "firstName"), value(provider, "lastName")].filter(Boolean).join(" ") || "—"}</td></tr>;
+        }) : <tr><td colSpan={5}>No service lines on this claim.</td></tr>}
+      </tbody></table></div>
+    </section>
+  </ClaimEditorSection>;
 }
 
 function ClaimEditorSection({ title, description, children }: { title: string; description: string; children: ReactNode }) {
@@ -3620,8 +3959,8 @@ type FormProps = {
 };
 type SimpleFormProps = Omit<FormProps, "data">;
 
-function Input({ label, name, form, update, required, type = "text", hint, placeholder }: { label: string; name: string; form: Record<string, string | boolean>; update: FormProps["update"]; required?: boolean; type?: string; hint?: keyof typeof claimFieldHints; placeholder?: string }) {
-  return <label className="field">{label} <span>{required && <b>*</b>}{hint && <ClaimFieldHint hint={claimFieldHints[hint]} />}</span><input autoComplete="off" name={`pracx-${name}`} type={type} required={required} placeholder={placeholder} value={String(form[name] || "")} onChange={(event) => update(name, event.target.value)} /></label>;
+function Input({ label, name, form, update, required, type = "text", hint, placeholder, disabled }: { label: string; name: string; form: Record<string, string | boolean>; update: FormProps["update"]; required?: boolean; type?: string; hint?: keyof typeof claimFieldHints; placeholder?: string; disabled?: boolean }) {
+  return <label className="field">{label} <span>{required && <b>*</b>}{hint && <ClaimFieldHint hint={claimFieldHints[hint]} />}</span><input autoComplete="off" disabled={disabled} name={`pracx-${name}`} type={type} required={required} placeholder={placeholder} value={String(form[name] || "")} onChange={(event) => update(name, event.target.value)} /></label>;
 }
 
 function TextArea({ label, name, form, update, required, placeholder, rows = 4 }: { label: string; name: string; form: Record<string, string | boolean>; update: FormProps["update"]; required?: boolean; placeholder?: string; rows?: number }) {
@@ -6508,7 +6847,7 @@ function ClaimForm({ data, form, update }: FormProps) {
       ])} />
       <Input label="Box 15 other date" name="otherDate" form={form} update={update} type="date" hint="otherDate" />
       <Select label="Box 17 provider role" name="referringProviderQualifier" form={form} update={update} hint="referringQualifier" options={configured("provider_role", [["DN", "DN · Referring provider"], ["DK", "DK · Ordering provider"], ["DQ", "DQ · Supervising provider"]])} />
-      <Select label="Box 17a other-ID qualifier" name="referringOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={configured("box17a_identifier", [["0B", "0B · State license"], ["1G", "1G · UPIN"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number (supervising only)"]])} />
+      <Select label="Box 17a other-ID qualifier" name="referringOtherIdQualifier" form={form} update={update} hint="providerOtherId" options={configured("box17a_identifier", [["0B", "0B · State license"], ["1G", "1G · UPIN"], ["G2", "G2 · Commercial number"], ["N5", "N5 · Plan network ID"], ["SY", "SY · SSN"], ["X5", "X5 · Industrial accident"], ["ZZ", "ZZ · Taxonomy"], ["LU", "LU · Location number (supervising only)"]])} />
       <Input label="Box 17a other provider ID" name="referringOtherId" form={form} update={update} hint="providerOtherId" />
       <Select label="Box 19 information qualifier" name="additionalClaimInfoQualifier" form={form} update={update} hint="providerOtherId" options={configured("box19_information", [
         ["0B", "0B · State license"], ["1G", "1G · UPIN"], ["G2", "G2 · Commercial number"], ["LU", "LU · Location number"],
@@ -6561,7 +6900,35 @@ function ClaimForm({ data, form, update }: FormProps) {
   </>;
 }
 
+function PaymentMethodIcon({ kind }: { kind: string }) {
+  return <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    {kind === "Cash" ? <><rect x="2" y="5" width="20" height="14" rx="3" /><circle cx="12" cy="12" r="3" /><path d="M5 9v6m14-6v6" /></> : kind === "Check" ? <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9h6m-6 4h3m3 2 2 2 4-5" /></> : kind === "EFT" ? <><path d="m3 8 9-5 9 5H3Zm0 13h18M6 11v7m6-7v7m6-7v7" /></> : kind === "Digital Wallet" ? <><rect x="3" y="5" width="18" height="15" rx="3" /><path d="M3 9h18m-6 4h6v4h-6z" /></> : <><rect x="2" y="4" width="20" height="16" rx="3" /><path d="M2 9h20M6 15h4" /></>}
+  </svg>;
+}
+
 function PaymentEntryForm({ data, form, update }: FormProps) {
+  const payerType = String(form.payerType || "payer");
+  const method = String(form.paymentMethod || "Check");
+  const isCard = CARD_METHODS.includes(method);
+  const [partyQuery, setPartyQuery] = useState("");
+  const [partyResults, setPartyResults] = useState<DataRow[]>([]);
+  const [partyMessage, setPartyMessage] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    setPartyResults([]);
+    if (partyQuery.trim().length < 2) { setPartyMessage(""); return; }
+    const timer = setTimeout(async () => {
+      setPartyMessage("Searching…");
+      try {
+        const response = await fetch(`/api/payment-party-search?type=${payerType}&q=${encodeURIComponent(partyQuery.trim())}`, { signal: controller.signal });
+        if (!response.ok) throw new Error("Unable to search. Please retry.");
+        const body = await response.json();
+        setPartyResults(body.results || []);
+        setPartyMessage(body.results?.length ? "" : "No matches found.");
+      } catch (error) { if (!controller.signal.aborted) setPartyMessage(error instanceof Error ? error.message : "Unable to search."); }
+    }, 250);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [partyQuery, payerType]);
   const effective = calculatePaymentTotalEffective({
     paymentAmount: String(form.paymentAmount || 0),
     offsetAmount: String(form.offsetAmount || 0),
@@ -6570,22 +6937,45 @@ function PaymentEntryForm({ data, form, update }: FormProps) {
     otherAdjustments: String(form.otherAdjustments || 0),
   });
   return (
-    <fieldset className="payment-entry-fieldset">
-      <legend>Payment entry</legend>
+    <fieldset className="payment-entry-fieldset payment-composer" disabled={Boolean(form.savedPaymentNumber)}>
+      <legend>Payment details</legend>
       <div className="payment-compact-grid">
-        <Select label="Payer" name="payerId" form={form} update={update} required options={data.payers.map((row) => [value(row, "id"), `${value(row, "name")} · ${value(row, "payerId")}`])} />
-        <Select label="Method" name="paymentMethod" form={form} update={update} required options={PAYMENT_METHOD_OPTIONS.map((method) => [method, method])} />
-        <Input label="Amount" name="paymentAmount" form={form} update={update} required type="number" />
-        <Input label="Check / EFT #" name="referenceNumber" form={form} update={update} />
-        <Input label="Date" name="paymentDate" form={form} update={update} required type="date" />
-        <Select label="ERA (optional)" name="remittanceId" form={form} update={update} options={data.remittances.filter((row) => value(row, "status") !== "posted").map((row) => [value(row, "id"), `${value(row, "traceNumber")} · ${currency(value(row, "amount"))}`])} />
-        <Input label="Offset" name="offsetAmount" form={form} update={update} type="number" />
+        <div className="payment-party-toggle"><span>Who paid?</span><div role="group" aria-label="Payer type">{[["patient", "Patient"], ["payer", "Insurance"]].map(([type, label]) => <button type="button" aria-pressed={payerType === type} key={type} onClick={() => { update("payerType", type); update("payerId", ""); update("patientId", ""); update("paymentPartyLabel", ""); update("remittanceId", ""); update("encounterId", ""); update("serviceDate", ""); update("paymentPurpose", ""); update("paymentMethod", "Check"); setPartyQuery(""); setPartyResults([]); }}>{label}</button>)}</div></div>
+        <div className="field payment-party-search"><label><span>{payerType === "patient" ? "Patient" : "Payer"}</span><input aria-label={payerType === "patient" ? "Search patient by name, Patient ID or Claim ID" : "Search payer by name or Payer ID"} placeholder={payerType === "patient" ? "Name, Patient ID or Claim ID" : "Payer name or Payer ID"} value={String(form.paymentPartyLabel || partyQuery)} onKeyDown={(event) => { if (event.key === "Escape") setPartyResults([]); }} onChange={(event) => { setPartyQuery(event.target.value); update(payerType === "patient" ? "patientId" : "payerId", ""); update("paymentPartyLabel", ""); update("encounterId", ""); update("serviceDate", ""); update("paymentPurpose", ""); }} /></label>
+          {partyMessage && <small role="status">{partyMessage}</small>}
+          {partyResults.length > 0 && <div className="payment-party-results" aria-label="Search results">{partyResults.map((row) => <button type="button" key={value(row, "id")} onClick={() => { update(payerType === "patient" ? "patientId" : "payerId", value(row, "id")); update("paymentPartyLabel", value(row, "label")); setPartyQuery(""); setPartyResults([]); setPartyMessage(""); }}><strong>{value(row, "label")}</strong><small>{value(row, "identifier")}{value(row, "dateOfBirth") ? ` · DOB ${value(row, "dateOfBirth")}` : ""}</small></button>)}</div>}
+        </div>
+        <div className="payment-method-picker"><span>How was it paid?</span><div role="group" aria-label="Payment method" className="payment-method-tiles">{[["Cash", "Cash"], ["Credit Card", "Card"], ["Check", "Check"], ["EFT", "Bank transfer"], ["Digital Wallet", "Wallet"]].map(([key, label]) => <button type="button" key={key} aria-pressed={key === "Credit Card" ? isCard : method === key} onClick={() => update("paymentMethod", key)}><PaymentMethodIcon kind={key} /><span>{label}</span><b aria-hidden="true">{(key === "Credit Card" ? isCard : method === key) ? "✓" : ""}</b></button>)}</div><details className="payment-more-methods"><summary>More payment methods{!["Cash", "Credit Card", "Check", "EFT", "Digital Wallet"].includes(method) ? ` · ${method}` : ""}</summary><Select label="Payment method" name="paymentMethod" form={form} update={update} required options={PAYMENT_METHOD_OPTIONS.filter((option) => payerType !== "patient" || !["ERA", "Paper EOB"].includes(option)).map((option) => [option, option])} /></details></div>
+        <div className="payment-receipt-meta"><Input label="Payment date" name="paymentDate" form={form} update={update} required type="date" /><Input label="Posting date" name="postingDate" form={form} update={update} required type="date" /><Input label="Receipt / reference" name="referenceNumber" form={form} update={update} placeholder="Optional reference" /></div>
+        {payerType === "patient" && String(form.patientId || "") && <div className="payment-visit-map">
+          <label className="field"><span>Visit / service date (DOS)</span><select aria-label="Choose visit or DOS" required={form.paymentPurpose !== "advance"} value={String(form.encounterId || "")} onChange={(event) => { const encounter = data.encounters.find((row) => value(row, "id") === event.target.value); update("encounterId", event.target.value); update("serviceDate", value(encounter || {}, "dateOfService").slice(0, 10)); }}><option value="">{form.paymentPurpose === "advance" ? "No visit yet · unapplied advance" : "Select the visit for this payment"}</option>{data.encounters.filter((row) => value(row, "patientId") === String(form.patientId)).sort((a, b) => value(b, "dateOfService").localeCompare(value(a, "dateOfService"))).map((row) => <option key={value(row, "id")} value={value(row, "id")}>{shortDate(value(row, "dateOfService"))} · {value(row, "chiefComplaint") || "Visit"} · {value(row, "status")}</option>)}</select><input type="hidden" name="serviceDate" value={String(form.serviceDate || "")} /></label>
+          <label className="field"><span>Payment purpose *</span><select aria-label="Payment purpose" required value={String(form.paymentPurpose || "")} onChange={(event) => update("paymentPurpose", event.target.value)}><option value="">Select purpose</option><option value="copay">Copay</option><option value="deductible">Deductible</option><option value="coinsurance">Coinsurance</option><option value="past_balance">Past balance</option><option value="advance">Advance payment</option></select></label>
+          {form.encounterId && <small>Linked to DOS {shortDate(String(form.serviceDate || ""))}. Claim allocation will be limited to this visit’s service date.</small>}
+          {form.paymentPurpose === "advance" && !form.encounterId && <small>Will remain unapplied until a visit and claim are available.</small>}
+        </div>}
+        <div className="payment-amount-strip"><Input label="Amount received ($)" name="paymentAmount" form={form} update={update} required type="number" /><div className="payment-unapplied-summary"><span>Applied <b>$0.00</b></span><span>Unapplied <b>{currency(effective.toFixed(2))}</b></span></div></div>
+        {isCard && <div className="payment-card-fields">
+          <div className="payment-brand-picker"><span>Card brand</span><div role="group" aria-label="Card brand">{["Visa", "Mastercard", "American Express", "Discover"].map((brand) => <button type="button" key={brand} aria-pressed={form.cardBrand === brand} onClick={() => update("cardBrand", brand)}><strong className={`payment-brand-${brand.split(" ")[0].toLowerCase()}`}>{brand === "American Express" ? "AMEX" : brand === "Mastercard" ? <><i aria-hidden="true" className="payment-mastercard-mark" />Mastercard</> : brand}</strong>{form.cardBrand === brand && <b aria-hidden="true">✓</b>}</button>)}</div></div>
+          <Select label="Card type" name="paymentMethod" form={form} update={update} options={CARD_METHODS.map((option) => [option, option])} />
+          <Select label="All card brands" name="cardBrand" form={form} update={update} required options={CARD_BRANDS.map((brand) => [brand, brand])} />
+          <Input label="Card last 4 digits" name="cardLast4" form={form} update={update} placeholder="1234" />
+          <Input label="Authorization code" name="authorizationCode" form={form} update={update} />
+          <Input label="Processor / terminal" name="processor" form={form} update={update} placeholder="Processor or terminal name" />
+        </div>}
+        {method === "Digital Wallet" && <Select label="Wallet" name="walletProvider" form={form} update={update} options={["Apple Pay", "Google Pay", "Samsung Pay", "PayPal", "Venmo", "Other"].map((wallet) => [wallet, wallet])} />}
+        {["Check", "Cashier's Check", "Money Order", "EFT", "ACH", "Wire Transfer"].includes(method) && <Input label="Bank / issuer name" name="bankName" form={form} update={update} />}
+        {method === "Online Payment" && <Input label="Payment portal / processor" name="processor" form={form} update={update} />}
+        {method === "Other" && <Input label="Payment method description" name="otherMethod" form={form} update={update} required />}
+        {payerType !== "patient" && <Select label="ERA (optional)" name="remittanceId" form={form} update={update} options={data.remittances.filter((row) => value(row, "status") !== "posted").map((row) => [value(row, "id"), `${value(row, "traceNumber")} · ${currency(value(row, "amount"))}`])} />}
+        <details className="payment-adjustments"><summary>Adjustments <small>Offsets, refunds &amp; other amounts</small></summary><div className="payment-compact-grid"><Input label="Offset" name="offsetAmount" form={form} update={update} type="number" />
         <Input label="Refund" name="refundAmount" form={form} update={update} type="number" />
         <Input label="Incentive" name="incentiveAmount" form={form} update={update} type="number" />
         <Input label="Other adj." name="otherAdjustments" form={form} update={update} type="number" />
-        <div className="span-2"><Input label="Notes" name="notes" form={form} update={update} placeholder="Deposit / lockbox notes" /></div>
+        </div></details>
+        <div className="payment-entry-notes"><Input label="Notes" name="notes" form={form} update={update} placeholder="Deposit / lockbox notes" /></div>
       </div>
-      <p className="payment-effective-note">Effective total {currency(String(effective.toFixed(2)))} · claim paid + adjustments must match</p>
+      {isCard && <p className="form-guidance">Record the receipt details only. Full card numbers and CVV are not collected. This entry records a payment; it does not charge a card.</p>}
+      <div className="payment-composer-total" role="status"><span>{form.savedPaymentNumber ? "✓ Payment created" : "Payment total"}<small>{form.savedPaymentNumber ? `Payment ID: ${String(form.savedPaymentNumber)}` : `${method} · ${String(form.paymentPartyLabel || "Select a payer or patient")}`}</small></span><strong>{currency(effective.toFixed(2))}</strong></div>
     </fieldset>
   );
 }
@@ -6596,10 +6986,12 @@ function EraForm({ data, form, update }: FormProps) {
       <legend>ERA 835</legend>
       <div className="payment-compact-grid">
         <Select label="Payer" name="payerId" form={form} update={update} options={data.payers.map((row) => [value(row, "id"), value(row, "name")])} />
-        <Input label="Trace #" name="traceNumber" form={form} update={update} />
-        <Input label="Date" name="paymentDate" form={form} update={update} required type="date" />
+        <Input label="Check / EFT #" name="traceNumber" form={form} update={update} />
+        <Input label="Check date" name="paymentDate" form={form} update={update} required type="date" />
+        <Input label="Posting date" name="postingDate" form={form} update={update} required type="date" />
         <Input label="Amount" name="amount" form={form} update={update} required type="number" />
-        <div className="span-2"><Input label="835 content / file ref" name="raw835" form={form} update={update} placeholder="Paste test 835 or filename" /></div>
+        <label className="field span-2"><span>Upload 835 file</span><input accept=".835,.dat,.edi,.txt,text/plain" type="file" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; update("fileName", file.name); void file.text().then((text) => { update("raw835", text); const parsed = parseEra835(text); if (!parsed.ok) return; update("amount", parsed.paymentAmount); update("traceNumber", parsed.referenceNumber); update("paymentDate", parsed.paymentDate); }); }} /><small className="address">Selecting a valid ERA fills the amount, check/EFT reference, and check date automatically. All values remain editable.</small></label>
+        <div className="span-2"><Input label="Or paste 835 content" name="raw835" form={form} update={update} placeholder="Paste test 835 when no file is available" /></div>
       </div>
     </fieldset>
   );
@@ -6617,8 +7009,9 @@ function FeeForm({ data, form, update }: FormProps) {
   return <fieldset><legend>Contract fee schedule</legend><div className="form-grid"><Input label="Schedule name" name="name" form={form} update={update} required /><Select label="Payer" name="payerId" form={form} update={update} options={data.payers.map((row) => [value(row, "id"), value(row, "name")])} /><Input label="Effective date" name="effectiveDate" form={form} update={update} required type="date" /><Select label="Procedure" name="procedureCodeId" form={form} update={update} options={data.procedureCodes.map((row) => [value(row, "id"), `${value(row, "code")} · ${value(row, "description")}`])} /><Input label="Allowed amount" name="allowedAmount" form={form} update={update} type="number" /><Input label="Modifier" name="modifier" form={form} update={update} /></div></fieldset>;
 }
 
-function ProcedureForm({ form, update }: SimpleFormProps) {
-  return <fieldset><legend>Procedure charge master</legend><div className="form-grid"><Input label="Code" name="code" form={form} update={update} required hint="encounterProcedure" /><Input label="Description" name="description" form={form} update={update} required /><Select label="Code set" name="codeSet" form={form} update={update} required options={[["CPT", "CPT"], ["HCPCS", "HCPCS"]]} /><Input label="Default charge" name="defaultCharge" form={form} update={update} required type="number" hint="chargeAmount" /><Input label="Default place of service" name="defaultPlaceOfService" form={form} update={update} required hint="placeOfService" /></div><div className="checkbox-grid"><Check label="Authorization required" name="requiresAuthorization" form={form} update={update} /></div></fieldset>;
+function ProcedureForm({ form, update, editing = false }: SimpleFormProps & { editing?: boolean }) {
+  const rpm = RPM_CODE_MASTER.find((item) => item.code === String(form.code || ""));
+  return <fieldset><legend>{editing ? "Edit procedure & practice charge" : "Procedure charge master"}</legend><div className="form-grid"><Input label="Code" name="code" form={form} update={update} required hint="encounterProcedure" disabled={editing} /><Input label="Description" name="description" form={form} update={update} required /><Select label="Code set" name="codeSet" form={form} update={update} required options={[["CPT", "CPT"], ["HCPCS", "HCPCS"]]} /><Input label={rpm ? "Custom practice charge" : "Default charge"} name="defaultCharge" form={form} update={update} required type="number" hint="chargeAmount" /><Input label="Default place of service" name="defaultPlaceOfService" form={form} update={update} required hint="placeOfService" /></div>{rpm && <p className="form-guidance">2026 Medicare national-average reference: {currency(rpm.medicareReferenceFee)}. This is separate from your custom practice charge and is not a locality-specific payment guarantee.</p>}<div className="checkbox-grid"><Check label="Authorization required" name="requiresAuthorization" form={form} update={update} /></div></fieldset>;
 }
 
 function IntegrationForm({ data, form, update }: FormProps) {
@@ -6695,5 +7088,6 @@ function modalTitle(module: OperationsModule, mode: string) {
   if (module === "payments") return "New payment entry";
   if (module === "payers" && mode === "plan") return "Add insurance plan";
   if (module === "integrations" && mode === "edit") return "Configure integration";
+  if (module === "procedures" && mode === "edit-procedure") return "Edit procedure charge";
   return moduleMeta[module].action;
 }

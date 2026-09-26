@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Fragment } from "react";
 import type { LocalUser } from "../lib/auth";
 import {
   type WorkspaceVariant,
@@ -38,12 +39,14 @@ export function WorkspaceSidebar({
         </div>
       </div>
       <nav aria-label="Primary navigation">
-        <p className="nav-label">Workspace</p>
-        {navItems.map((item) => (
-          <Link className={`nav-item ${item.key === activeKey ? "active" : ""}`} href={item.href} key={item.key}>
-            <span className="nav-dot" aria-hidden="true" />
-            {item.label}
-          </Link>
+        {navItems.map((item, index) => (
+          <Fragment key={item.key}>
+            {(index === 0 || item.section !== navItems[index - 1]?.section) && <p className="nav-label">{item.section || "Workspace"}</p>}
+            <Link className={`nav-item ${item.key === activeKey ? "active" : ""}`} href={item.href}>
+              <span className="nav-dot" aria-hidden="true" />
+              {item.label}
+            </Link>
+          </Fragment>
         ))}
         <p className="nav-label setup-label">Configuration</p>
         {configLinks.map((item) => (

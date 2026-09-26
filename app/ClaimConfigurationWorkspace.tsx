@@ -46,20 +46,30 @@ export function ClaimConfigurationWorkspace({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    const response = await fetch("/api/claim-configuration");
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch("/api/claim-configuration", { signal });
     const body = await response.json() as Payload;
     if (!response.ok) throw new Error(body.error || "Unable to load claim configuration.");
     setData(body);
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      load().catch((reason: Error) => setError(reason.message));
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20000);
+    const start = window.setTimeout(() => {
+      load(controller.signal).catch((reason: Error) => setError(reason.name === "AbortError" ? "Loading Claim configuration timed out. Check the server connection and retry." : reason.message)).finally(() => setLoading(false));
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(start); window.clearTimeout(timeout); controller.abort(); };
   }, [load]);
+
+  async function retryLoad() {
+    setLoading(true);
+    setError("");
+    try { await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load claim configuration."); }
+    finally { setLoading(false); }
+  }
 
   const rows = useMemo(() => (data?.values || []).filter((row) => {
     const matchesCategory = category === "all" || text(row, "category") === category;
@@ -134,11 +144,11 @@ export function ClaimConfigurationWorkspace({
           <input aria-label="Search configuration values" placeholder="Search code or description" value={search} onChange={(event) => setSearch(event.target.value)} />
           <button onClick={() => setForm(emptyForm)} type="button">Add custom value</button>
         </div>
-        {error && <p className="form-error">{error}</p>}
+        {error && <p className="form-error" role="alert">{error} <button className="table-button" onClick={() => void retryLoad()} type="button">Retry</button></p>}
         {message && <p className="form-success">{message}</p>}
-        <div className="table-wrap"><table><thead><tr><th>Category</th><th>Code</th><th>Description</th><th>Source</th><th>Effective</th><th>Status</th><th /></tr></thead><tbody>
+        {loading ? <div className="loading-state" role="status">Loading claim configuration…</div> : <div className="table-wrap"><table><thead><tr><th>Category</th><th>Code</th><th>Description</th><th>Source</th><th>Effective</th><th>Status</th><th /></tr></thead><tbody>
           {rows.map((row) => <tr key={text(row, "id")}><td>{data?.categories[text(row, "category")] || text(row, "category")}</td><td className="mono"><strong>{text(row, "code")}</strong></td><td><strong>{text(row, "displayName")}</strong><small className="address">{text(row, "internalGuidance") || "No internal guidance"}</small></td><td><span className={text(row, "isOfficial") === "yes" ? "config-source official" : "config-source custom"}>{text(row, "isOfficial") === "yes" ? "Official" : "Custom"}</span>{text(row, "payerId") && <small className="address">Payer override</small>}</td><td>{text(row, "effectiveDate") || "Open"}{text(row, "terminationDate") && <small className="address">Through {text(row, "terminationDate")}</small>}</td><td><span className={`status-pill ${text(row, "status") === "active" ? "active" : "inactive"}`}>{text(row, "status")}</span></td><td><button className="table-button" onClick={() => edit(row)} type="button">Edit</button></td></tr>)}
-        </tbody></table></div>
+        </tbody></table></div>}
       </section>
 
       <aside className="claim-config-editor">

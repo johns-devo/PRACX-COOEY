@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { isPracxStandalone, PRACX_STANDALONE_ORIGIN } from "../lib/app-surface";
+import { isPracxStandalone } from "../lib/app-surface";
 
 export function LoginScreen() {
   const [email, setEmail] = useState("admin@pracx.local");
@@ -33,13 +33,20 @@ export function LoginScreen() {
 
   return (
     <main className="login-page">
+      <section className="login-hero">
+        <p className="login-hero-mark">PRACX</p>
+        <h1>{pracxStandalone ? "Billing that follows the claim." : "Connected care. Clean operations."}</h1>
+        <p>{pracxStandalone
+          ? "From the visit to the payer, and back when it is not paid."
+          : "Scheduling, the chart, and the claim in one practice."}</p>
+      </section>
       <section className="login-panel">
         <div className="login-card">
           <div className="login-card-wordmark">
             <span className="brand-mark">PX</span>
             <div>
               <strong>PRACX</strong>
-              <small>{pracxStandalone ? "Billing & integrations" : "Care Operations"}</small>
+              <small>{pracxStandalone ? "Client billing" : "Practice"}</small>
             </div>
           </div>
           <span className="login-kicker">{pracxStandalone ? "Client billing access" : "Secure practice access"}</span>
@@ -97,20 +104,6 @@ export function LoginScreen() {
               {isSigningIn ? "Signing in…" : "Sign in to PRACX"}
             </button>
           </form>
-
-          <aside className="development-access">
-            <span>Local development access</span>
-            <div><b>Email</b> admin@pracx.local</div>
-            <div><b>Password</b> Welcome@PRACX1</div>
-            {pracxStandalone ? (
-              <div><b>This site</b> {PRACX_STANDALONE_ORIGIN} (Integrations first)</div>
-            ) : (
-              <>
-                <div><b>Care ops</b> http://localhost:3003</div>
-                <div><b>PRACX client</b> {PRACX_STANDALONE_ORIGIN}</div>
-              </>
-            )}
-          </aside>
 
           <p className="login-security">
             Protected session · Automatic sign-out after 8 hours

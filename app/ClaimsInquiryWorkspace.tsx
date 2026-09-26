@@ -75,6 +75,7 @@ export function ClaimsInquiryWorkspace({
     claimLines: DataRow[];
     claimWorkflowEvents: DataRow[];
     payments: DataRow[];
+    paymentEntries?: DataRow[];
     claimPayments?: DataRow[];
     coverages: DataRow[];
   };
@@ -89,6 +90,8 @@ export function ClaimsInquiryWorkspace({
   const [dosTo, setDosTo] = useState("");
   const [selectedPatientId, setSelectedPatientId] = useState("");
   const [selectedClaimId, setSelectedClaimId] = useState("");
+  const [patientSuggestions, setPatientSuggestions] = useState<DataRow[]>([]);
+  const [isSearchingPatients, setSearchingPatients] = useState(false);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const patient = params.get("patient") || "";
@@ -104,11 +107,32 @@ export function ClaimsInquiryWorkspace({
   const claims = data.claims;
   const coverages = data.coverages || [];
 
+  useEffect(() => {
+    const query = patientQuery.trim();
+    if (query.length < 3 || selectedPatientId) { setPatientSuggestions([]); setSearchingPatients(false); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSearchingPatients(true);
+      try {
+        const response = await fetch(`/api/patient-search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
+        const result = await response.json() as { patients?: DataRow[] };
+        if (response.ok) setPatientSuggestions(result.patients || []);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setPatientSuggestions([]);
+      } finally {
+        if (!controller.signal.aborted) setSearchingPatients(false);
+      }
+    }, 220);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [patientQuery, selectedPatientId]);
+
   const matchedPatients = useMemo(() => {
     const q = patientQuery.trim().toLowerCase();
     const claimNeedle = claimQuery.trim().toLowerCase();
     const payerNeedle = payerQuery.trim().toLowerCase();
-    let ids = new Set(patients.map((row) => value(row, "id")));
+    const hasCriteria = Boolean(q || claimNeedle || payerNeedle || dosFrom || dosTo);
+    if (!hasCriteria) return [];
+    let ids = q ? new Set<string>() : new Set(patients.map((row) => value(row, "id")));
     if (q.length >= 1) {
       ids = new Set(patients.filter((row) => {
         const memberIds = coverages.filter((coverage) => value(coverage, "patientId") === value(row, "id")).map((coverage) => value(coverage, "memberId")).join(" ");
@@ -133,23 +157,32 @@ export function ClaimsInquiryWorkspace({
     return patients.filter((row) => ids.has(value(row, "id")));
   }, [patients, claims, coverages, patientQuery, claimQuery, payerQuery, dosFrom, dosTo]);
 
+  const selectedClaim = claims.find((row) => value(row, "id") === selectedClaimId);
   const activePatientId = selectedPatientId && matchedPatients.some((row) => value(row, "id") === selectedPatientId)
     ? selectedPatientId
-    : value(matchedPatients[0] || {}, "id");
+    : value(selectedClaim || {}, "patientId") || (matchedPatients.length === 1 ? value(matchedPatients[0], "id") : "");
+
+  const matchingClaims = useMemo(() => {
+    const hasCriteria = Boolean(patientQuery.trim() || claimQuery.trim() || payerQuery.trim() || dosFrom || dosTo);
+    if (!hasCriteria) return [];
+    const patientIds = new Set(matchedPatients.map((row) => value(row, "id")));
+    return claims.filter((claim) => {
+      const patientId = value(claim, "patientId");
+      const dos = value(claim, "dateOfService");
+      const payerMatches = !payerQuery.trim() || `${value(claim, "payerName")} ${value(claim, "payerClaimPayerId")} ${value(claim, "memberId")} ${coverages.filter((coverage) => value(coverage, "patientId") === patientId).map((coverage) => `${value(coverage, "memberId")} ${value(coverage, "payerName")}`).join(" ")}`.toLowerCase().includes(payerQuery.trim().toLowerCase());
+      return (!patientQuery.trim() || patientIds.has(patientId))
+        && (!claimQuery.trim() || `${value(claim, "claimNumber")} ${value(claim, "id")}`.toLowerCase().includes(claimQuery.trim().toLowerCase()))
+        && payerMatches
+        && (!dosFrom || dos >= dosFrom)
+        && (!dosTo || dos <= dosTo);
+    }).sort((left, right) => value(right, "dateOfService").localeCompare(value(left, "dateOfService")));
+  }, [claims, coverages, matchedPatients, patientQuery, claimQuery, payerQuery, dosFrom, dosTo]);
 
   const patientClaims = useMemo(() => {
-    return claims
-      .filter((claim) => value(claim, "patientId") === activePatientId)
-      .filter((claim) => {
-        const dos = value(claim, "dateOfService");
-        if (dosFrom && dos < dosFrom) return false;
-        if (dosTo && dos > dosTo) return false;
-        if (claimQuery.trim() && !value(claim, "claimNumber").toLowerCase().includes(claimQuery.trim().toLowerCase())) return false;
-        if (payerQuery.trim() && !`${value(claim, "payerName")} ${value(claim, "payerClaimPayerId")}`.toLowerCase().includes(payerQuery.trim().toLowerCase())) return false;
-        return true;
-      })
-      .sort((left, right) => value(right, "dateOfService").localeCompare(value(left, "dateOfService")));
-  }, [claims, activePatientId, dosFrom, dosTo, claimQuery, payerQuery]);
+    const hasClaimFilters = Boolean(claimQuery.trim() || payerQuery.trim() || dosFrom || dosTo);
+    const rows = hasClaimFilters ? matchingClaims : claims.filter((row) => activePatientId && value(row, "patientId") === activePatientId);
+    return rows.sort((left, right) => value(right, "dateOfService").localeCompare(value(left, "dateOfService")));
+  }, [claims, activePatientId, matchingClaims, claimQuery, payerQuery, dosFrom, dosTo]);
 
   const activeClaimId = selectedClaimId && patientClaims.some((row) => value(row, "id") === selectedClaimId)
     ? selectedClaimId
@@ -208,12 +241,19 @@ export function ClaimsInquiryWorkspace({
   return (
     <div className="claim-inquiry">
       <form className="claim-inquiry-filters" onSubmit={(event) => event.preventDefault()}>
-        <label>Patient<input onChange={(event) => { setPatientQuery(event.target.value); setSelectedPatientId(""); }} placeholder="Name, ID, account, DOB, member ID" value={patientQuery} /></label>
+        <label>Patient<input autoComplete="off" onChange={(event) => { setPatientQuery(event.target.value); setSelectedPatientId(""); setSelectedClaimId(""); }} placeholder="Type patient name or ID" value={patientQuery} /></label>
         <label>Claim #<input onChange={(event) => { setClaimQuery(event.target.value); setSelectedClaimId(""); }} placeholder="PRACX claim number" value={claimQuery} /></label>
-        <label>Insurance ID<input onChange={(event) => setPayerQuery(event.target.value)} placeholder="Payer or member ID" value={payerQuery} /></label>
+        <label>Payer / insurance ID<input onChange={(event) => { setPayerQuery(event.target.value); setSelectedClaimId(""); }} placeholder="Payer name, payer ID or member ID" value={payerQuery} /></label>
         <label>DOS from<input onChange={(event) => setDosFrom(event.target.value)} type="date" value={dosFrom} /></label>
         <label>DOS to<input onChange={(event) => setDosTo(event.target.value)} type="date" value={dosTo} /></label>
+        {(patientQuery || claimQuery || payerQuery || dosFrom || dosTo) && <button className="claim-inquiry-clear" onClick={() => { setPatientQuery(""); setClaimQuery(""); setPayerQuery(""); setDosFrom(""); setDosTo(""); setSelectedPatientId(""); setSelectedClaimId(""); }} type="button">Clear</button>}
       </form>
+
+      {patientQuery.trim().length >= 3 && !selectedPatientId && <div className="claim-inquiry-suggestions" role="listbox" aria-label="Patient search results">
+        <strong>{isSearchingPatients ? "Searching patients…" : `${patientSuggestions.length} patient match${patientSuggestions.length === 1 ? "" : "es"}`}</strong>
+        {patientSuggestions.map((patient) => <button key={value(patient, "id")} onClick={() => { setSelectedPatientId(value(patient, "id")); setSelectedClaimId(""); setTab("claim"); }} role="option" type="button"><span>{value(patient, "lastName")}, {value(patient, "firstName")}</span><small>{value(patient, "accountNumber")} · DOB {shortDate(value(patient, "dateOfBirth"))}</small></button>)}
+        {!isSearchingPatients && patientSuggestions.length === 0 && <small>No matching patients. You can still search by claim, payer/member ID, or DOS.</small>}
+      </div>}
 
       {selectedPatient && (
         <section className="claim-inquiry-banner">
@@ -230,31 +270,14 @@ export function ClaimsInquiryWorkspace({
 
       <div className="claim-inquiry-grid">
         <section className="claim-inquiry-pane">
-          <header><strong>Patients</strong><small>{matchedPatients.length}</small></header>
-          <ul>
-            {matchedPatients.length ? matchedPatients.map((patient) => {
-              const id = value(patient, "id");
-              const count = claims.filter((item) => value(item, "patientId") === id).length;
-              return (
-                <li key={id}>
-                  <button className={id === activePatientId ? "active" : ""} onClick={() => { setSelectedPatientId(id); setSelectedClaimId(""); setTab("claim"); }} type="button">
-                    <strong>{value(patient, "lastName")}, {value(patient, "firstName")}</strong>
-                    <small>{value(patient, "accountNumber")} · {shortDate(value(patient, "dateOfBirth"))} · {count} {count === 1 ? "claim" : "claims"}</small>
-                  </button>
-                </li>
-              );
-            }) : <li className="claim-inquiry-empty">No patients match.</li>}
-          </ul>
-        </section>
-        <section className="claim-inquiry-pane">
-          <header><strong>Claims</strong><small>{patientClaims.length}</small></header>
+          <header><strong>{selectedPatient ? `Claims · ${value(selectedPatient, "firstName")} ${value(selectedPatient, "lastName")}` : "Matching claims"}</strong><small>{patientClaims.length}</small></header>
           <ul>
             {patientClaims.length ? patientClaims.map((row) => {
               const id = value(row, "id");
               const status = deriveClaimLifecycle(row) as ClaimLifecycleStatus;
               return (
                 <li key={id}>
-                  <button className={id === activeClaimId ? "active" : ""} onClick={() => { setSelectedClaimId(id); setTab("claim"); setActionsOpen(false); }} type="button">
+                  <button className={id === activeClaimId ? "active" : ""} onClick={() => { setSelectedClaimId(id); setSelectedPatientId(value(row, "patientId")); setTab("claim"); setActionsOpen(false); }} type="button">
                     <span className="claim-inquiry-row">
                       <strong className="mono">{value(row, "claimNumber")}</strong>
                       <span className={`status-pill ${lifecycleTone(status)}`}>{CLAIM_LIFECYCLE_LABELS[status] || status}</span>
@@ -263,7 +286,7 @@ export function ClaimsInquiryWorkspace({
                   </button>
                 </li>
               );
-            }) : <li className="claim-inquiry-empty">No claims for this patient.</li>}
+            }) : <li className="claim-inquiry-empty">{patientQuery || claimQuery || payerQuery || dosFrom || dosTo ? "No claims match these search criteria." : "Search by patient, claim number, payer/member ID, or date of service."}</li>}
           </ul>
         </section>
         <section className="claim-inquiry-detail">
@@ -357,16 +380,17 @@ export function ClaimsInquiryWorkspace({
               {tab === "payments" && (
                 <div className="claim-inquiry-tab">
                   <table>
-                    <thead><tr><th>Date</th><th>Paid</th><th>Adj</th><th>Reference</th></tr></thead>
+                    <thead><tr><th>Date</th><th>Payment ID</th><th>Paid</th><th>Adj</th><th>Reference</th></tr></thead>
                     <tbody>
                       {claimPayments.length ? claimPayments.map((payment) => (
                         <tr key={value(payment, "id")}>
                           <td>{shortDate(value(payment, "paymentDate") || value(payment, "postingDate"))}</td>
+                          <td>{value(payment, "paymentEntryId") ? <a href={`${claimPrepHref.replace(/\/claims\/?$/, "/payments")}?paymentId=${encodeURIComponent(value(payment, "paymentEntryId"))}`}>{value((data.paymentEntries || []).find((entry) => value(entry, "id") === value(payment, "paymentEntryId")) || {}, "paymentNumber") || value(payment, "paymentEntryId")}</a> : "—"}</td>
                           <td>{currency(value(payment, "amount"))}</td>
                           <td>{currency(value(payment, "adjustmentAmount"))}</td>
                           <td>{value(payment, "referenceNumber") || value(payment, "payerName") || "—"}</td>
                         </tr>
-                      )) : <tr><td colSpan={4}>No payments posted to this claim.</td></tr>}
+                      )) : <tr><td colSpan={5}>No payments posted to this claim.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -406,7 +430,7 @@ export function ClaimsInquiryWorkspace({
                 </div>
               )}
             </>
-          ) : <p className="claim-inquiry-empty">Select a patient, then a PRACX claim number.</p>}
+          ) : <p className="claim-inquiry-empty">{patientQuery || claimQuery || payerQuery || dosFrom || dosTo ? "Choose a matching claim to open its complete billing record." : "Search by patient, claim number, payer/member ID, or date of service to open a billing record."}</p>}
         </section>
       </div>
     </div>
